@@ -1,0 +1,1080 @@
+From 11ae7f2ffcaf63658bd9eb8e5def76962bfeb8eb Mon Sep 17 00:00:00 2001
+From: Chuanbo Weng <chuanbo.weng@intel.com>
+Date: Mon, 22 Dec 2014 17:58:23 +0800
+Subject: [PATCH v2 1/2] Add example to show libva buffer sharing with
+ extension clCreateImageFromLibvaIntel.
+
+This example read a source nv12 file to a VASurface, and create a target
+VASurface. Then create corresponding cl image objects from them. After
+using ocl to change this VASurface to a gray image, target VASurface is
+saved as a file.
+Code of loading nv12 file to VASurface and display related are referenced
+from libva/test/encode/avcenc.c and libva/test/common.
+
+v2:
+Delete 1920x1080.nv12 and 640x480.nv12 because of large size, add
+256_128.nv12 as default test image.
+
+Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
+Signed-off-by: Zhao Yakui <yakui.zhao@intel.com>
+---
+ CMakeLists.txt                                     |  27 ++
+ examples/CMakeLists.txt                            |  26 ++
+ examples/libva_buffer_sharing/256_128.nv12         |   1 +
+ .../libva_buffer_sharing/libva_buffer_sharing.cpp  | 443 +++++++++++++++++++++
+ examples/libva_buffer_sharing/sysdeps.h            |  79 ++++
+ examples/libva_buffer_sharing/va_display.c         | 166 ++++++++
+ examples/libva_buffer_sharing/va_display.h         |  64 +++
+ examples/libva_buffer_sharing/va_display_x11.c     | 139 +++++++
+ kernels/runtime_gray_effect.cl                     |  28 ++
+ 9 files changed, 973 insertions(+)
+ create mode 100644 examples/CMakeLists.txt
+ create mode 100644 examples/libva_buffer_sharing/256_128.nv12
+ create mode 100644 examples/libva_buffer_sharing/libva_buffer_sharing.cpp
+ create mode 100644 examples/libva_buffer_sharing/sysdeps.h
+ create mode 100644 examples/libva_buffer_sharing/va_display.c
+ create mode 100644 examples/libva_buffer_sharing/va_display.h
+ create mode 100755 examples/libva_buffer_sharing/va_display_x11.c
+ create mode 100644 kernels/runtime_gray_effect.cl
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a967540..4edf543 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -198,11 +198,38 @@ ENDIF(OCLIcd_FOUND)
+ 
+ Find_Package(PythonInterp)
+ 
++OPTION(BUILD_EXAMPLES "Build examples" OFF)
++IF(BUILD_EXAMPLES)
++IF(NOT X11_FOUND)
++  MESSAGE(FATAL_ERROR "XLib is necessary for examples - not found")
++ENDIF(NOT X11_FOUND)
++# libva
++pkg_check_modules(LIBVA REQUIRED libva>=0.36.0)
++IF(LIBVA_FOUND)
++  MESSAGE(STATUS "Looking for LIBVA - found at ${LIBVA_PREFIX} ${LIBVA_VERSION}")
++  INCLUDE_DIRECTORIES(${LIBVA_INCLUDE_DIRS})
++ELSE(LIBVA_FOUND)
++  MESSAGE(STATUS "Looking for LIBVA (>= 0.36.0) - not found")
++ENDIF(LIBVA_FOUND)
++
++# libva-x11
++pkg_check_modules(LIBVA-X11 REQUIRED libva-x11>=0.36.0)
++IF(LIBVA-X11_FOUND)
++  MESSAGE(STATUS "Looking for LIBVA-X11 - found at ${LIBVA-X11_PREFIX} ${LIBVA-X11_VERSION}")
++  INCLUDE_DIRECTORIES(${LIBVA-X11_INCLUDE_DIRS})
++ELSE(LIBVA-X11_FOUND)
++  MESSAGE(STATUS "Looking for LIBVA-X11 (>= 0.36.0) - not found")
++ENDIF(LIBVA-X11_FOUND)
++ENDIF(BUILD_EXAMPLES)
++
+ ADD_SUBDIRECTORY(include)
+ ADD_SUBDIRECTORY(backend)
+ ADD_SUBDIRECTORY(src)
+ ADD_SUBDIRECTORY(utests)
+ ADD_SUBDIRECTORY(benchmark)
++IF(BUILD_EXAMPLES)
++ADD_SUBDIRECTORY(examples)
++ENDIF(BUILD_EXAMPLES)
+ 
+ SET(CPACK_PACKAGE_VERSION_MAJOR "${LIBCL_DRIVER_VERSION_MAJOR}")
+ SET(CPACK_PACKAGE_VERSION_MINOR "${LIBCL_DRIVER_VERSION_MINOR}")
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+new file mode 100644
+index 0000000..3fec8f3
+--- /dev/null
++++ b/examples/CMakeLists.txt
+@@ -0,0 +1,26 @@
++INCLUDE_DIRECTORIES(${CMAKE_CURRENT_SOURCE_DIR}
++                    ${CMAKE_CURRENT_SOURCE_DIR}/../utests
++                    ${CMAKE_CURRENT_SOURCE_DIR}/../include
++					${X11_INCLUDE_DIR})
++
++link_directories (${LIBVA_LIBDIR}
++				  ${LIBVA-X11_LIBDIR})
++
++set (examples_sources
++  ../utests/utest_error.c
++  ../utests/utest_assert.cpp
++  ../utests/utest_file_map.cpp
++  ../utests/utest_helper.cpp
++  ./libva_buffer_sharing/va_display.c
++  ./libva_buffer_sharing/va_display_x11.c)
++
++
++ADD_DEFINITIONS(-DHAVE_VA_X11)
++ADD_DEFINITIONS(-DINPUT_NV12_DEFAULT="${CMAKE_CURRENT_SOURCE_DIR}/libva_buffer_sharing/256_128.nv12")
++
++ADD_LIBRARY(va_ocl_basic SHARED ${examples_sources})
++
++TARGET_LINK_LIBRARIES(va_ocl_basic cl m va va-x11 ${X11_X11_LIB})
++
++ADD_EXECUTABLE(example-libva_buffer_sharing ./libva_buffer_sharing/libva_buffer_sharing.cpp)
++TARGET_LINK_LIBRARIES(example-libva_buffer_sharing va_ocl_basic)
+diff --git a/examples/libva_buffer_sharing/256_128.nv12 b/examples/libva_buffer_sharing/256_128.nv12
+new file mode 100644
+index 0000000..230f4cf
+--- /dev/null
++++ b/examples/libva_buffer_sharing/256_128.nv12
+@@ -0,0 +1 @@
++FDFGGGGIIIJHKLKLNLLOMOOOPRA)BNQPRRRSRRUTVXVTUVXWWYVXWXWYXXZYZYYYZZ[[[\[ZZ\[Z\\^]]]]]^]^^^^^____`_`_`_```a``acaaacbcbdcabdbccbdcdcdcadcdbccdbccdbdddccddcdcdabcbcbcbccbbcaabdcbbLhiututtuuusqomknopsqrstuuututsrqoponnmlkkkjj“°„ƒ†ŒvWY[ZZZZZ[YZYXXYWWWWX[YSg_[CGGEHGHHIJHILJLLLNNMMOPOPO:(EPPRQRSSSTUTTTVWVVVVXWXVYXXXYXYYZYZZZZY[[Z[Z[[]\[[[]\\^]]^_]__^^^____a``aabaabababbaabaabcacbbabbcccddddcbcddbdcddccdddcdccdcdbdbccbcdcccbbcbcbbdb`Lhiuuuurqopqrsqtttuuuutvsrrqpoonmmlijiihfddb`ˆ²†…ŒwXX[Z[ZYZYZYXXXXXWWWWWYYQ†_FFDFHGFGIJIIHHLJLLLLOOOOPP3+HOQPRRQSTSTUUUVTVUWXXWWYYYYYYXXYYYZZ[Z[[[[Z[[Z[\[^][]^]^]_^^^]^]__^```_aa``aaababccccbdccdcccdccddddddddecdcdddccdcddddcddedccdcdcddccdeccbbabbcddaKggqsttuvwvwxxwxvvssrqponommlkkjjhgfc`]ZUROLKx·ˆ€€„ŠwYX[[[ZZZYYYXYXXXXXWVWVXVeZECFGFGFHIHIIIJJKMLMNMOONOP,-KOQOQRSRUSUUUVWVVWXUWXVXYYYYXYYXXZYZZ[ZZZ[[\[[[[\\Z\]]]\^^_]_^^^___a_`a`a``baab`cbbbbcbbcdccccacddcbccdddddcddddddddddcddddedbdcdbcddcccbbbbabccccaIghwyy{yyzyxvussrqpopnnmmmiihfda^YURNLJJMOQTUw½Š€€ˆyZU[\\ZZZYZYXYXXWWVVUVVVUQOCCEFEGEGHHIJIIJJKLLMOOOPPL%/KNPQQRRSSTTRUUVVXVVVWWYWYYYZYYZYZ[ZZ[Z[ZZ[Z[[\Z\\^]]\]^^]^]__^_______a`_a`bb_cabacbccbcccbcbcdcdddccbddcddddddddeddddddddddcddcdcccdcdbcababcbbbbdbKfhy|zyxvutrsqppnommljihec_[WRNKKNORUUVUTTTVVvÃ‘€}~‚…z\UZ[Z\ZZZZZYXXXWWWUVVTTUSOCDDEGFFFGIHJHIJJKLLLMNONOL"0LPQQRSSSSUUTWTUVWVWWVWYYWYVXYYYYYZYYZZ[[Z\[\[\\\\\]\\^]^]^^]______``___`a`aa`cbcccbcbbbbdccdcddddbedddddddddddddddedefeeddedddcdccdddddddcdbbbbbcccMefvwtttrqpppnmljifc`[WSPLNNQTVWVVTUVWVWYZZZ[uÀ•€~}„{^SZ[[Z[ZZZYXYWXWWVWVVVTTTSCBDFDEEDFEHHIJIJLKLNLNNMQL 4NOQPRRSTSSUUUWUVVUVXWWXXYXYYYYZXZZZZY[[[Z[[[[\[\[\]]__]^^^^]^^]___``b`_babb_`bcbcbccbdbcdddcccdddddedeedddddeedeeeeeeeedeeddddcddddcdddfdccdccbcbcbJefrsrrqooljfe`\XSPNNPTWYZXUWVWXYYZ[[\\\\^^^_qÄ˜€~}}ƒ|`S[[Z[ZZZZZZYXXWXVVWUUTUTTBBDDCFFHGFIHHHIKJKJKMMNNNF!5LOOQSRSSTTTTWRUWUVVWWWYXXYZYYZYZYYZ[ZZ[[[[[\\\[\\]^^^^]`____^__`_``_```b``abbcdbcbccbccddddddddcdedddeddeefeefffeegeddgdedddefdfcddddedddcddcbcccdcLdfoonlhc[SSRONQVY[ZYYXXYYZZ[]\]^^^^^^_____``nÁœ~}}€{bO\ZZ[ZZZZZYYYXWXWSVUUTTTSEBBCDFEIFGFGIGIJJKJJHKMMMF$:NNPPRSRSSTUTTVUVWWWWVXWYYXYYYZYX[Z[Z[ZZ[[[[^[]\\]\\]_^^^_^\___]__a_aa`ababbbbabcbbccbbddcdcdcddddeddddeddfeeefedeffedfeefeeededdddddddddccdddcddcdcOcdb^YUQNPSZ]][Z\[Y\]]_^__`____``a`_`b_``baaci½Ÿ}}}€}dT[[Z\[ZZZYZYYXXXWWVTWfVTT56<L>&17@CEGHHGIIJJKKLNNMA&>NONQRSRSTTTTUUUVWTWXXVXYXXZYZZZYZZ[[ZYZ[[[Z]\[]\\]]]^_`__^___^_``_```aaaabbbaccbccbddcddcdddeddddededeeeeeefeeeefdgefgedeffeedeeeedededdddcdcccccddOcdVV[aa]VQ\^^^__aabb`aabaaabbabbbbbcacaccbcdkº ƒ~}}|gTZ\\[[[Z[ZYYXYXXVWVQcfbUT *+%,: "#"#&)-149@CHKKLNL=&?MMPOOQRRSSSSTTUVVWVWXWYYYZYYZZZYZYZZZ[[Z[\Z\[[]]^]^]]]]^^`]____^`````aabbbbcbbbcccccddddceddedddddddeefefeeeddegeefefffefffeeedfeddeeddeedddcdddcddQcda`^__`\Tbddedfcedddcddddcddcdcddddddddddeej³£‚}{~|iU[[\\\[Z[ZZYXYYYXWWM\EWUU"%.$"( !"!"#""#$$&$%&+/373',BLOPOPQPRRRTTTUUUVWVXWWYXYXXYYYZZ[\Z[\Z[\[\\[[\]]]^\^^^^`]_______````aaa`cbccadccbcccddddddedddddcdfeegeefeeefegfgfffffefffeeeffefffdedeeddddddecccdR`eefhhhhcYeghffffggfeeeffgedededeedeefefeffgl¬¥„~{|}zjV[\]]\][[ZZYZYYXXXVKQCJ_T" !""$"" ""#"#$$%$$$%$$%%&'''*.26;AHPRRRSSRTVWVUWVY[XZYYZXZZZZZ[[[[Z[[\]][\]]]^^]^^^___^__`_a_a``ab`aabbbcbccdcddbedddgdedeeddedeeefffgffgdffegggegfggfghffffeeededddeedddddcdccQ`dkklllki\ijjjiiiiiiihghihhghggggghggghhhiigl¨¥…~{|}{kXZ]^\\\\[ZYZYYXYXWWKYHEbV"!""%$""""""##$$%$$$$$$%%$&&%%&&'(()+),28<AJPQWVVXXWXXYYZYXZZZ[\[[\Z]]Z\\]\]^]^]_`]__^^__`_``a^`baabbbcddcccccbcbddeeedddededeffeeefgfeffgggfghghgggggghfgfgffffedeceeefededcdddSadmnoonnm_imllkklklkijjjjijihiiiihihhiiiijjjm¡©…~|||{lYZ\\^\\\\[Z[ZYXYXWWL\]@VV+*-))(&&%%$$%$$#$$$$%&%%%%&&%&&&&&&'(''(()*+,+.4EVXXWYYYZXZY[ZZ[[[Z]\[[[[\\]]]]_^\^_^___`````__`aa`bbcccccbccccccddddeefddfeeffeeebfffgggffgghhhggggggffgghigfffieeefefefeeeccddV^dmrqqqpqclnonnnlmmmllkllkkkljjjjjjklkkkllllmŸ°‡|z{zl[Z]]]]]\\[[[ZZYYYVXOTuKkY+++++*+++*++-++*+)''&%&&%&&&&&&'''&(()'))())+)++5VYXXY[YZYZ[ZZ[ZZ\[\\\\[\[]^\\^^^__^^____``a``a`a``aaccbbbdbddccdddddfeeeeeeefefefefhgfegffgghhhggghfgihehhggfggfffffeefeeeeeeedV^dotstsssiopqqppponponmmmmmmklmllllmlmmmmmmopš®…|zzzm[Z]^]^\]\\[\ZYZYYXVQMsnx\+,++++,,,,,-,,...-.....-.--+*)(('((((())))(*)**+3VWXYZYYZZYZZZZZY[Z[Z[[[\]\^^_]^_^^_____``__a_a``aabaabcddcdccddddedfeeeddefffefeeggfggdghggghghhhhhghhiighggfgehfhggdffeeeeeeddX`dqwxvuvulttsrsrqqqrqpoonnnnonlnnnmononnmoopq—²†{yyzn]Y]^\^\]]]\[[ZZYYXXSHrz|[+*+++*+,+,----..//./.0//0//11/0010/./-,+++))*+++/PWYXXYZZZZZ[[[Z[\Z\]Y\\]]^^^^^^_^__^___^_`aba```abacbcccdbbcdddddceededdedeeffffffgefffhhhhhgghhhhhghihhhhhhgghghgggfgffedfeeefX^eqyzyxxxjswvuussrstrqqqqrrppoooonopppprrwy}œ¶†|zy{o\W^]]]]\^Z\\[]ZZXYXUI^}|Y+++,,,,,-,,-.-././/1/00/0101111212223433332211/-/KYYXXXZZYY\ZZ[Z\\\]Z\[]]]]]]^^]__^__^`_`_a`aa``baabcbcbccccbddeedddeegeefffefffheeegfghhgfhhhhihhihhhhhhhiehhgggghhggffffeddeee[_dr}||zzzpvwxxvuvtuuutssrsrrrprqquy}‚„‡‰ŒŒŸµ…}yyzoZW^_]]^]^]\^[[[[ZXXXNPz|Z+++,,-+-,....-../00///0011112313343344445454653,.GWXYXXZZ[[\[]^^]]^\^^_^^^___^^^`__``__^_aa`a`abbaabcabcddcddddedddeecdffedffffffhffghhihhhhhihiiiiiiihigjgiiggihhhhfggfffeedeeeZZdr~}}||oxyzyyvxwvvwvvtttssssrss„‹Ž‘Ÿ´†€}zxyp[W^]^^]]^]]\\[Z[ZYXXSRwxW++++,,,,,,...././000010011221322445446555566665..AYX[DtÃÔÕÂª¢œ—š—““˜™œž¢§°ÁÊÆ¦dJ\b`_____````ba``cb`b`cbcbccdccddcdedfeeeeeggefgeeegfgigghghgihihiiijiiiiiihhhhhiighihgggfgfhefff[Yds€}ku{|{{zyxxxxxvvtvtvutttv†ŽŽ‘‘‘’‘‘µ…~xxyq[U]_]_^]]]^\\\[\[YYYWSjjS,,,+,,-..-.-.-.0/00/0102121224333435555555566760-‘º¤›‘Œ‡ƒ~~~~€‚ƒ……†‰‹’•™  Ïó¬K_``a`aa`aaababcccccbcdeeeddddefeefefffefgggghggghhihifiiijijiiiiiihiiiighihihhhggihggggedf\Xdrƒƒ‚‚€ju}~}~|zyzzyzxxwuxvwwvuv†‘‘‘’’’’“’ž²†~€ywyp\T^]^^^]^]]\\\[[[ZZYYVSKS+++++,,.--..//000/0011112323333444345567866779€¨›šˆƒ}{ywwwvvvwy{|{€‚„…†ˆˆ‹ŒŽŽ“—”—œ­ÓXa``_`aaaaabbbbccdccddddgfceefffffefgghgghigghiiiihiiiihiiijiijjjiijjhhijihhhhihihggfgff]Wcr…‚ƒƒƒƒou~€€~~||{zz{yxvrqljedhl’“”‘“”“”““Ÿ»Ey}yvwp]T_]^_^^]]]]]\\[ZZZYYXROU,+,,,---,...//0//0101222222334344445665778878|”‰~{yxvutwuuuxxyz{|}€„„‡‡‰Š‹ŒŽ‘’”–¢­b`abaaaabbcdbcccccdddddeeedefgffgegegfgghgihhhihhiiijjjijjjiijijiiihiijhiihihhhgggffff]Vbr††…„†„pv€€€}zxrmgefhjknoqsuwwx„’““””•”“••‘j_@y€yvvq^R__^^]^^]]]\\[[[ZZYZXXWV+,-,,---.../0///00021212222344545655579787987…Š‡}Œ€v}|xwvvxuuvxxxx{|€‚……‡ˆ‹ŒŒ‘’“œr`aaaababbcccbcccddddeedeeefeefffgfehhgiihhhgiiiiihijiijikkjkikjjijijkijijiihighiggggf_Vcq‰‡„‚zkdgddggikloqruuvxxzyz{x|‚’““’““”“””“ˆiQM}yuuq_S^___^^^^^]]][\\[ZYYYYXX+,,,-,-.-....1//11112233424354545777676777898€Š†gy}zxxutwuuwuyxz|}€€‚ƒ„…‡ˆŠŠŠƒŠŠŽ’’–š‹a``aa`abbbaccbcdddddeedfeeefdfhgghgighhhhhhiikhhiijijkjiijkikkkkjjjlijjihiiiiiiihghff_Tbdhffghhijkmnpopqstuvwxyyyz{||||‚’‘’’’““’’“˜ˆk4eztuq_R^____^]]]]\\[\\[ZYYYYXW+,,-,--......1001111333333335355567798767798:ƒ‹ˆ|}w|zxvvuwuuuwyyz{}‚ƒ„†‡ˆ‰‰Nkˆ‹‹‘•™žva_`aa`aabbdbdcdccddddeefegfefgggffggghgghhihjjijjjjkjjjjijkjkkkkkkjjjkjjiijjijigighgh_Sbceikkllmmononppprstvyyz{{|}~}}}Ž‘’’‘’’’“““—¬g[;qusp`S_`_`_]_^]^]][\[ZXYYYXWW,,,-.../.../0/002113233443545565777897778798:€ˆ‡€Œ}y{yyvuuvuuuvxyz|}€‚ƒ„…††„nmynk†ˆ‚f]‘™žma`abaaabb`bbcbcddddedddffgffdfgggghggiighhhihhihjkjjkkkkkkkkkkjiljkjkkjjjkiiiiijhfhgeaPbbbfhjlmlmmnooppoqsuvyy{}}~‚‘‘‘’‘’•§„cNGptqaT^``a__^^^\\\]\\[ZZYXYXW,,,--..//..//11111123444544456657678887788:8<„ˆ‚Œzx|zxvuuuuvwvyyz|}€‚ƒ„…‡…r„ˆ‡~n{+.6—šma`aabababcacdcddbddeeeeffefggfheggghhhhiihhiiijhjkjjjjjkkkkkkklklkjkkhjkjjjjjijiihhhi`Rbaacdfhklmnnooqprstvxy{}€€€ƒŒ‘‘‘’£Šib7VrqbT_```___^^^]]][Z[ZZZYXWX,,--.-../.0000112333345445556666678898887898;„…ƒ‰wzzywvvvuuuxwyzz|~€€ƒ…†‡ƒ>‚W…€q]Z,.30”nk`aaa`aabacbbdcddededddefdefdegggffhighhhiiiiijhiijjjjjlljlkkjlllklllkkkkkkjjijiiihiihbQa`aabdffhjmooopqqstwy{}€ƒƒ{g‚ƒ‹Ž‘ŽŽ’£w`X=aqcV`aa```__^^^]\][[ZZYXXXX,,-.-..///1/111121334364455656678889:9:998::8‚~„ƒ‰yzzxwvtwuvuvxyz{}ƒ„„…‡‚Q|iva<-.4:‹faa`aa`baaccbbddddddeeeeedfefeggfgghiiihhghihijikjjjkkjjjlklkklllllljlllkljkjjjjijihhh`Obaadbddefhjlmnoqqstwzƒ†‰‰ˆ†si„‹‹ŽŽŽŽŽŽŽŸŒxpaHIkfZ_caaa`_`_^_]]Z[\ZZYXYWW--...////0/0112222344555565677788989:989899;<v……‰sz{ywxuwuuvwxyyz}~€€‚‚„†‡„;Sj]‚n2,13@€{fa`aabbbacabbccdcedfdddeffgfehfffghigigihijjhjjkjkjjcl^himkllklklllklkklllkkkiljijiihhcOa`aaccdeffhilmpvyy‚€~~zz~lQbrgƒ—ŒŽŽŽŽŒŒœ‹xvf\5Se[`bbabaa`_^^^^\\[ZZZYXXX-../..0000011222333545566566678999::::999:;:=wrƒ…ˆfyzyxvvvvvvwxxz{}€ƒ„…†‡…tv{qv}:G.SS>€d`aa_a`acccabcccceg…rsuritnigigbb_`^Z]\XYYYWXUSZYUVWUURMPow„…nllllllmklklmlmkkljjiiiiicLaa`bddfeffghh~ÄÅ›‘±œ©º¾½½Â˜E_nqcX‚ŒŒŒŒŒŒŒŽ˜xws_S;TZ`baabaaa``^^^]\\[ZZYXXW-2..00//01/11223334366666687779::::;;989::::@sxx|~gxzxvuvuvuvxxzx{|€„ƒ„‡…„L0=QPso0/4>€e`aa`aababacd|œrOIF=OLMOONNOOQPPQQQQPQQTRQRPSRQRQPOQOQONPMQXcmy‡rmmmnmmlllllljkjjijjiicMaa_bddffgfe_UqŒ„tmnfgi_]WQG3@atdJ{Œ‹ŒŒŒŒŒŒ—wutj]@>V`ccbbaaaa`__^]]\[[[ZYXX/.../0/001013334454465557878898::;:;;:;::<;;@quvxvoonoqrsstuwwyyz{y~€‚‚‚‚€|ymYeErxxH7:y…„_`````baan¥L5--PŽ²¶iVNLNOOONORPONUG@HHHKEDGMRRVc\^dam`fT];=ADHMUcy„mlmklimmlkkjjjkkjjifMbbc`cfggfXI>7>FAAF;313,)).)'5^rcFw‹ŒŒŒ‹‰•‹vtsp`Y2B_ccccbaaa`__^\]\][[YYXW./.0000/11212243464667677879899::;;;;;;:;<;<<suwxvonjjiijkmortvwy{{z{{{zyvwxywibkt|€zJ]‹Te_`_`ahiJª·¨sqlŒ‡‡yDSžœŸŸ  ¢¢¢¤¤¤¤¥¥¦¦¥¤¦¦¦¥¤¤¤£¤¢£¢¡›€U[eiI:><BXnmlmllmllllljjjijjeNab`]adghge_VHD-(',*()((-CV<,5]qdFy–›¢£ŒŒ‹‹ˆ“‹wrrql`O5Rcdcbbaa`__^__]^][[[ZXY/..00/0001223334656768787999:::;;;;<;;<<<;;<@rwwxupmjighiiiijlmpswuqijuxyy{|~c_ayŽ†Eqˆtc```abYHLˆ‡Škgg‡„†vG@I‰œŸžœ¡ž›žœ››™—˜‘–“ŽŽŽŒŒŒŠˆ„Œˆˆ{uzIHI||{^af€„nmmmmlmlmmjjljjjigLab][^bdffbbge`<**@=6310Eim[=;\oeE„­´¹²£œŒŒŠ‹‘Švsrpof\67adedcbba``__^^]][[[YYY.//0111101134455667789879:99:;;:<<<<=<;;=<==>rwxzxppSfidnoonmoqvxxk>--yƒ„……„ƒ€}|~‚†ysƒgba```a[JP‡‰‡hfg†ƒ†tDA@BiklkkQSRRRjhiiiDBACGiiiiiPQQRWqrqyFIH~||^`_}|rmmmmnmmmmlkkjjljieOaaa\\bedbbfhhpY+-QG:654BghM67WhdTÂÊÎÎÍÌ¦‹‹Š‹’Švronmj]T4Adddcca_a`a__^_]\[ZZXY./101211123334585878889:99::;;;;;==<==<==>>?9{q{„ƒaqiYY^jlnstvx{zwE))-w…†‡‰‰ŠŠ‰ŠŠ‰…„€~…‰c``__`ZJQ„‡ˆggg„ƒ†qDA@DifgggPQOQPgffggEA?@FhhfhhRQQSXooqxFHI||]``}}nmmmmmlmllllkkjjjiePag‚|pvq~gfgm‰ncNWhaY[adinlQAFOPLM_’ÀÏËÎÌª‹ˆˆ…{tronmkc[F5Vdddcaba```_`]][[[ZXY//2121112334656788899:::;;;;<;=<<=>=>>?>>>??;sk{„f.^4-epsuvvxz|{zs[Agaxƒ‡‰‡Š‹‹‹ŒŽŒ‹Š‰‡†€‚b`_```XKO„…‡gffƒƒ‡oHIIFhggffRRQTQhfgghDBADHffgfgQRTUXnoqxXHH‚|}da`}}xmnnmllmmmllklkkjkfLbg…|€‹€smlflihgggdccabc^J?<>@CEGAJ|¡šŽ€o]XUOiqsqpnlkcZY06bedccbba``__^]][\[ZZ/012331233556677888;::;;<<<===>?>>=?????>?@@9Jsyxtoa4*5lsuuvxyy{|}}wH/*7ƒ†‰ŠŠ‹ŒŒŒŒŠ‰‰ˆ†‡‚‡``a_abYLO€‚ˆL>U‚‚†N66558lihiZ555559liiCQ44444ShjSWQ3564FzHHQhy{d`_~|ummmnmmlnmllkklkjkfPbafb`[YX\\]_adginnpqtstrjA559@?C?:6@?=31/+3?BcqtqonmkcW[Q3Idedebcaaa`_^^^\[[ZY100232334467677899::;;<<====>????@@@A@@@A@AA:*wwvtad4(:Mclqtvxz{}~~zH,-r€…ˆ‰Š‹‹‹‹‹ˆ‰ˆ†ƒ}w}aa`c`aF<I…?_zE<ƒ^dZVWXO5RjH9[UUVYF6bj5>[VSU[44nX6=cXZb:8K[90;:j_i:3|pnnlmollllllljjjifPabfhieagifeb_\YWRQKIFDB??9217;><:529>M311+/7;\jtpnnmkdWY\;5`cdccbaa```_^\\\[ZZ/01244344466779::;:;;>>==?>??@@@A?AABAACABBB<'w|}k+]jllgV+Kmswzz|~€|ulrL}ˆ‰ŠŠ‰Š‡Šˆ‡…‚wmiv``_`a`Z[Fy6fjkgk\lkM=ASWX5~YW\I9DWUZ3PZV\FANYUM;3YWaUU_XfL6`a`f8a:pl]mnmnmnmmllllkkjiifOa^IFC?><9754321001012112874661001024=U756/-13?XqpmmlkdV^\W2>eddcbac`___^^\[[[Z213344456678989:;;<==><>>@?@AAAABABCBCBBCCDC:"z†lWwyyxutspc(bty{}‚€€}T+*U…‰Šˆ‡‡†‰Š‡ƒzmhek_`ba`aBF^–iC@A>j›˜<88847T‚€5569766Y~637873:bƒ\648743b“€@==Ycm_lhkmnmmllmmlmlllkkjieM`\;43554442101121033434472042-,-////8G8651-211KqpmmkjdX_d]H3Reddcbbb`__^[]\\Z[223445576789::;;=<==>?@@?AAABCBCCCDEDDCEDDED;#~R}}|zywxxvsm9]tz}ƒ€s1-~‡‰ˆ…yLx‡ˆ‚}rhedj__`aaa?:4‘>BB=ol¥;:8775W‚€‚6567765rƒS‚/568674ƒƒ€5988852Ž’:?=;|“39=`mmlnnnmmllllllkjjfOa_PLJGFCEF8.02233344544;C7122/-/1.-.6M9662-430LpnllkjcW_i_Y39bedccbaa`_^]]\[[Z3444566778::;;<===?>?@AAABBCDDDDEDEFEGGFFFFE<(x2|‚~|zxwwwwun0gw}€ƒ‚ƒƒ€…‡‰‡‚(.a…†€xmfdcja`aa`a=<Y™Tiquxedx€iab``__^_^^b`Cb``__`b_fdfiu…~€Œv‰T959œ“V=;almmmnlnmlmllllkkigQ`qÏÍÆÀ¹¬¦˜v614554555768JƒiAC?83461.9[Y9864/440KomlkkjcX_if]P2Efcdcbba__^\\]\[Z44466677::;;<==>??@@BBABCCDEFFGGHFGGGHHGGHHH=%zj„‚€€}yxwxwxxul(pz}€‚‚„ƒ„†‡ˆ‰ˆ†vUT‚zrjecbk```_aasGVLMQ]PRRZZ¡‚€€]]^a^^]\]\]^6]]^]^]^fbe_^ƒ„ƒƒ…INdGHaNNMOSglllmmmmlkllmnnkmfPazøúùùùøöïÑF4677678689;A€‘f_f\TRKA9Q|]<:950562LomlkkicY^iha[<4Yeedbb`__^^^]\[Y45667889:;==>>>?AABBCEDDEFGGHIHHIIHHJJIIJIJJ=%w~…€}}{ywuquwxt]Vx}‚‚„…††ˆ‰‹ˆ‡‚..||wmheebn_`_`aasHIZSNXQ[UU]£…€€€€_]b]e^af^\\^6]]]]_aaa_^_`ƒ‚„„…ŽMMO]IbLJMKAtlllllmllmls›¾ÀÅÔÕuPbmõûûúúùøóØE698989::::;=Xt€€“‘Ž‹rPToR=;;92753MomkjijcZ^ijg[U0;bddcbaabd]^^\\[556789::<=<?>?AAABCEEFFHHHHJJJJKKKJKMLKKKLLK?&-…„mt}}{yuU<_vywr&s}€ƒ‚„†‡ˆˆ‰‰Šˆ‡zfgtrkgedbn``_`a`nJLOLLZPQV\W˜ƒ€q\_[^_^]^]]]7^]]^^]``d^aƒƒ„„„…GKMNNcLPQNVslllklmmos£Ê¼©–ÎÙ½RbxõúúúùöôðÕG8;:;;;<<===?Gp™˜•’‘““rPOF=>?;3:55MokkjjjcY`jiid\I2Nddcb``de^^[\[Z47779::<<>>@A@BBDEFHHIHJJIJLLKMMNMMMNNMNMNNM@28‡„*j}|{zu38rxxyt6l}€‚ƒ„…†‡‰ˆŠŠ‰ˆƒ_/lmihdc`h_aa_``mJLNKN[TSW]Y–ƒ€€_c]c`c^_^]_7^^]]_d_i_`_‚ƒƒƒ„…†ŽƒLXJMcLKLX…mklknlsÌ»¡‡¬¿¼¹°±¼WbpóúùøøöóïÔD:>=AKQLMDCA@DyŠ|d\UPNW[RHA>A@<4<39NnljjiicZ_kiii_X/8bddcablf^]][\[78799;<=>??ABCCCFFHIIJKKLLNNNOOOPPPQORPPRPPP@Ga‰…i||{ywsrwyyyv_bz€‚ƒ……†ˆ‰‰‰‡†ƒwgnhWcb`[e`_`_`amFGHOM\QZQS|™„€€‚l`cb^_a^]]^5\\^^bb^_`fy‚„„„„…†‘”WKGR`LRML”gkp˜»­–‡vmkŸ©˜˜Ç œŽX’qóùù÷÷ôñîÕG:?OP_efj^cYTR[_QB@@@ACFGGHEFJNe`;8KpljiiibZ`kkkjh]O2Abccfw„k]]\]\Z889:;<=?@AACCDFFHHJJLMMNNOPPQRRRSSSSTTSRSSSR@kqŠ‡‚~|{wwwxxxyywhIpvwx{}‚ƒ……†„„yslc\_YXR\_`````l^MLQR\\WZ\¡˜ƒ€‚€^ab]UZa]]_6___dcbcde`‚ƒƒ„„…„†“MQRVaNYO[“r´Å¿€lhiii¡”»°¨¹²›zpóø÷öôóñîÔB;@FmQbTP\`OgjOC>>>==?ABBACBBH_‘£†ANnkjiihd]`llkkjcZ95Xchu€ˆzf]\\[[9:;;==?@BBEEFGHIKKMNOQQQSSTTUUUUVWXWWWWVWUVTBrxŠ†…zneiotxxzzzxl>koqrruvwxyzyxvsnhbXT<:DLS_`__``hkEMIM\NOeVœš„~€€‚t_c_Qcf[__8^]_^_`e`_|ƒƒ……………†“DLMK`NKQ^”ÏÊÄ½…u€Žž§¨«ª¸µ¨«©Ž|eoò÷öôóòïíÑ„Š‘”œW`TQdZLb]NBX…ym?>>=;=?@CWˆž˜dJmllihhb]alnllkk^S/=j|‚‹‚r_\[[\:;<<>?@ABDEHHIKLMNPPSSTTVWWXXYYYZZZYZ[YYYXYWAtz‰ˆ…nrxwuoVtxyyzxk@loqqstuuvxywtsold`Y>:@BDO______knONPL[PVNOœ—ƒ€€€€XGCNMfa]]7_^__d`^_fƒƒ…„„………‡–‰Z]^`JXLZ–¹ÁÂ½²°µ±§­µ´Äº«•›€gs}èóòóñðîëÊŽ’“’ŽG28CGDRyaIBVŠ„x@?>?>>>>@Rt…fYmkjiiid`annnmnlg\B7[~~ˆƒ}m\VY_;=>>?AACEFHIKLNOQRSTUWXYYZ\\\\]]]]]]^^]]]]\\Vuu‹‡rz{zxtlVuyyzymNloostuvuvxwutrojda^YXTSNW__^`_`if?WNOZQWP“š–€€€‚‚JMDKIHbW`8_____e]`‚„……ƒ„…†…‡’”s\~PcPNK˜–¹ÅÇÁ·¨¢§¸À½Ë­©›‹““ZX[^dfimovnz€–™˜“I:?LWJs…‚sQb”Ž…„€|y{wrnd^j‚xf`mkhhhgdacnoponmlaV.=}„}€}^e{†=>>@ADDEFIJLNOQQTTXYYZ\]^^_``_aaaaaacbb`a`_^hvgŠ‡;rwwsk4:vyzzvW]npqruwvwxyxvtroiea`][YVRW^___^ZjI;GbKXOMP”™“€€‚]MCDtFcH_^7_^_``__„„…„„……††‡‡‘“VdfpkSNP“”ÖÊ¼¥ «¾ÅÆÆÈ«¤›‰›¦—SRRLKLLKKIKKY™œžšJTDYab~‚€zWY“Žƒ~|€€‚ƒ‚{z{vwtmX\liihhgdedoqqrpoooZJ6Q|y€wx…•¡¢ >?ABCDFHIKNOPSTUYY[\^``abddfeeffffffefefcccbewF‰ˆ+,IU<,+fv{zzr$forqrutvxxyyxurpjfcb`_^\WK__VKLHl=:F?MZNS€“™”ƒ‚‚eEKQHTEKZ9`]^_ga‚ƒ„„………………ˆ’qcgmdOV^–—Õ©›¥½¼¶¯ª¨¤šž©µ“TROIIKFC>>GHOƒŒŠ†J`jdgjwƒ}o=Z”“‡c^cihkehhda^[S>HljfggeegdpqsrrrsqX4<ky„‰•ž¬¶¾«=ACCEGHJLNPRUVXY[]_`cceehhijjjkkkkkjkijihgggWx1ˆˆ„r)))*9itxyzwi=lrrsuuxyy{{{{zxwsnkjheb^UOMHLE>;l\pOCW\XL‘’—“‚‚‚€€`GBjDb5_^_j_Zo|ƒ„„…†…‡‡†‰’p“•ccaQN™––—’«¤¢©¦•”{ŒŽ˜”‰UQLIII@9<CGGGu‹Ž‹O]BScjinjhPT‘‚BDJKPPKNMOPTPA8Gjihfffdhfpprrrr|‹‡^P7IŒž§®´¼¿´ª@BDEGIKLOQSVXY\^acdfghkllnoppppppqqpooonmmlkuƒR…‰‡€yqnpuuxxyxn-nvz|}~‚„„†ƒ…„ƒ{wqnlifb\XQME:533mnqJ@ddtU_`—“‚€€€€€‚‚‚ƒ}OgGGpYjkiRSS`d]{………††‡‰Š“—˜—mcldaw—žÉ¦¸ÎÍ°Ž–tgig‹•pRNJHC=:?FGHHJt‘”—”WfkNgotpwI4XŽ‹}758:=??@778;=87Fiigffedifqppoot„‹Y;Lz­·ÂÑÍ¼­¡BEFFIKLOQTVZ\^bcfgjlmpprstuvvwuuwuxuvuutssqqzŠ‡y……ƒ~|zxyywwuo1jx}€ƒƒ……†‡ˆˆ†…„€}xrplif`]YPB636=MjnoJ?pZx?…UQƒ€‚€€ƒ‚TfKYjYXXqJI„z_SPZ„…†††‡‰”™˜™}picf–k‘ÒÓÆÓÈ˜tfynkkpn€Š^QMD>=C@FGHHGLu“—™˜S[CPcp^y„]3XŽx333567<?1-,+)47Biihededfepsqpoy‹”›eRDt±ÃÈÅÃ¸³¦DFIJLNQTVXZ^`bfhkmrrtwwz{||}~~~~}~}|{zzywt}Œ‰+}‚€|yxyusnX-oy}ƒ„„…‡‡‰ˆ‡‡…ƒ€}xsolhe`]W\=BVcbbjnq<@GKC;‹PG“€€‚‚hCFGEG[orKeF€ƒMTOLZ‡†‡‡‡‰”™™‡ifgqi™pÙ×Æ±˜ŒkfflsyxrvˆƒSE=?EE@DFFFGDIqŒŠM^krjfJiˆp3V““f:KOVSSJ;8/+(*8:Pjihffddicorsqs†’•›¥\C}“·»¼¿¿²ªFHJKNQTWY\_cehknqxxz|~ƒ„ƒ„„…‡†…†„…„„ƒ€~{€ŒŒ€%ltwsqoi]9.brx}}‚„„…†‡‡‡ˆˆ…ƒ|ysokge`]VW=?DGNUjmG<]E?>eŒNŽ‘‚‚‚‚‚‚€KHGGD[EHMHNYa„‡NNh…†…‡‡ˆŠ–œ›hkwr~’—|×«›”œr`cd^SSSPw‰kI:EMGCCEFGDCBESŒ—””L\cDemPi‡s7W‰T09BCHJD:453/*07Jjihedddhbkoqo~’˜Ÿ§®°wVAx­¸´»½­¤GJLNQSW[^achknrv{}ƒ†ˆ‡ŠŒŒŒŽŒŒ‹Š‡†„‚‚Œ…<*+! .C-Zkrx{|}~‚ƒ„…††‡‰ˆ‡…„‚~wtolhea\VK/0//12lm<<DJVCDBŒ’Žƒ‚‚‚‚‚eDEGHFXHFJG\gF|ƒzƒ…†††ˆˆ‰‰˜Ÿ¢mk^qanu¡¢š——‡j_dd^OEBI`~~D:7<A3PÍðîæäåìíïììé˜NY^bms[t‚r8W‡E,09?@CB82/-+'/:Kihgdeccd^hgiqŒ›Ÿ££§²«\M\‡²²¶¾½ºJJNRSWZ\aegmqu{|ƒˆ‹‹‘’‘“•“˜•™•™•š“”’‹Œ…‡|ŒGfi*`hY*U0mvz{|}€‚…„…†‡‡ˆˆˆ†…ƒxrmkhda[UL<99998la=EEJWJJEj‚€‚‚IL\J[]]9_^WEKFI‚………†††ˆˆ‰Š™ ur\Yn[]n™¡vrrkjac`XSV[PTSZU@¿äÕÑÑÊÊÜçïòõõõõòðëäÊ`Jgf[eo9U–”>,,37:;;;2++();CKiigfedb\[a`\Xa~šÅÄ°¹¥x‚Ž†‰‹•¥79:==@CFIJMPUX\_dgkmoqqqqpqqrrtututroqonmmljvŠ€HV*VD[Q8\Qty|||€‚ƒ„„…†‡‡‡‡‡†„ƒ€xrmkgd_ZSL@?=;:<hXmDDIRJK‰R‚€‚‚‚€JKH[]^^^:_^]^[GNG…‡†…‡ˆ‡‰Œš pYYp\Z¥u WW[^_YSQc_^[[hˆØ¿¼¼½¼Á¿Ùìõøø÷öõóðïíêçâØ‰n`Tfzd6T˜Œ1+,.00002/)'('1?Liheded_WW\XQB39LŒš“n‹cuxrnw€9@MVQGEFJNQTZ\bfjpuw{{yyxxyyz}}€~|ywvuuuutsxŠ‰ƒ'otn$PL,kxz|}€‚ƒ……††‡‡Šˆ‡†„ƒxqnjgc^ZUJ6:.-9>gkmCDHQJK€w‹‚€‚‚‚‚‚fUQ]\]_^_5^__^^_]€L……††‡‡ˆˆŠš Ÿ YWq\Z…œžSZ]\``UaZWhi¾°¬ª¯µ·ºÑåíóõøøùøõòîéääáÜÙÖÍ·vqwmT4U–w@<@?GHKK=5.'&%+3Gihfedc`TQXVMB74@›˜—”qie}–¡£¢¥ž50+%'*1=J[X[`chotz‚„…‚‚€€‚…ˆŠŠŒ‰‡ƒ€}|€}|z‰ˆˆ‡Œx;b7\oD=Gwz|}‚ƒƒ…††‡†‡‰ˆ†„…yrnjfb^YSI:;9448hkmDEIOJJV‰Š‚€|Xa^_^___9______hp]v……†‡ˆ‰‰‹š  ›WUwYUTttxwvvuuw¨«¦Ÿ £¨­°ÍåëïñõõòðïîåáÙ×ÕÑÑÒÎÍÌÅ¾HXZF4X¤¥¨©­¹¹—qVK<74.,/9Qjkjfdd_QIo{}~€|‡„K4-2gqposqrlt::>?AIKD,$$).6CQdy|ˆ€vvljedgirujaYOHHGHIOQOGG‡v|‡Š|)b3kvuoqxz|€ƒ„†„…‡‡‡‡ˆ†„ˆƒwqmhe`]XRH6;77CSfjcBDGSHKO†‹‰ƒ‚‚‚__`_^_a;^^____`‚„„…‡†ˆ‡‰‰Œš  [WVtVUSœœ_rnlrpr„¦Ÿ””—› £ÚæêìíìëêæáÛÖÒÍÆÆÆÇÆÃÁÄÃÂÆÆcMB4f¢£¢¢¡¬­˜Š…†’”Œ†…Ÿ®­Žec_N@sƒ…ˆŠ‰†~M*((,KSVX[\>7e///00002223433.*%&''08?GPYhb\OFA=:;;::;;;;;;>ˆ+V}}u<r\hvxxyyxyx|{|‚ƒ„………†‡††……†vpkgc_\VCG;;?JG@ehGACGQHIK†‹Š‚‚€€€‚a_^^^^__:`^_____h„†…††‡‡ˆŠšŸžYUSqUTT˜›EJKHIF£Ž†ŠŒŽ—œâèçéèçãÝØÔÒ¾ÈÁººº¸¹º»½ÅÇÉÈÑÖ×L7x¤›œ’Š‘Š}~‹‹€uyzywy}†zfcM>[lqy|~~x@''((/+((++%%+..0011114453588;;=>ABAA>;0,'%'')+*+++-257=@D@{)NvugOjdYouvvuUPnj1q|‚ƒƒ†„„„ƒ‚ysmgc_\VM=HnWE@??cfC@BGPHHJ€‰‰‚€‚€^^_`_`^_8`__`^``a„…††‡‡ˆ‰ŠŒ™ŸTRSoSQP›™pqrkp¢“…~‰•šžßçæåáàÝØÓÐËÈÂ»±ª ¬²¶¸»ÀÃÌÒ×ÜàÌ§KkÑþò”ˆ‚etjx‡†ƒ‡Ž†…„xm†•—˜›šŸ¤ ¢„*(((,,%'*****:05<966577>763;<=B:555A2:72005;5105458221<.4:o(Nun'1cC-7fkml`mkqcirtvuxxxyxxwtrnhc^[WRPERIÄ5468bf@CBEQHGJd‡ˆ‚€€€€‚p__`^__]`<`_____``{……††‡‰ˆ‰˜ŸžQPNiPNOš–LMO\¡ˆ~†…xssbÞååäßÜÙÓÍÊÇÁ¼·µ··¿Â½¾ÃÆÍÔÚÛÖÉ•ˆK`©¯ŠŒ~Z2345457677:<=BBCIHMQX^fllqry@677A:9?HP?%&+&&)'-77*-0<`]T1310957./1//8A223708:447:<494?+pruqb^c_#bdjkhToxzhRlqtuvwwwwwtrqmfa]YVRNIJKu<7-,+TKZ[KMTZ^nv†„~€‚heeeffgffHhgghillqr‚‚ƒ‚‚‚…Ž‘v‡xYT[i˜KU©ŸŠsrojgce„ßåâãáÞÚÔÐÍÄÄº¼¼½³»ÁÁÌÍ×ÚÑÍ·¤‘Pfi™vxrtx|„x=88765124231/.//022122223457?>932425200//.+30/..,--.-././1244579999:;<<<>=<<;:68#+04DH2+uxvsmknl]hkkiIakutgO8qtrvvvvvvurrlf`[XSPMHBIPJ1/..SLXampuy|o|†r}ƒ‚~~}€~nnYeor„€„„ƒƒ…pq„†rq…‡‰‡‡‰Š‹ˆ‚c€™››š˜~•~š˜zwefdcb`ZÈÒÑØÜàààÜÙÖÑÐÒÌÐÎËÑØØÙØÍµ•~‚ƒ†ƒ‡}›Pdcabbbdvƒ\E=5,../202234333323343222232211111/007r““,)AGXdgijcYSEBBB?;:98:8:9<;:<:=:;<==9<:<<=:=?(sxxusqpnmlllkfd^cIhjnrtsvuuvwvuspjd_ZVROJHEA:7447<]UW>DnqrKit|r]‚XmpYrnW{ƒ„„ƒ„ƒoXp~…qsRˆ‡‡ŠˆˆdS€jMu•]J“…”ylbaba^^_b¯µÁÆÊÏÒÕÛáâáàßÞÛÛÙÎÎÂ®›‰ˆ†…ˆ‹Œ‹ŽKR[cw‘šŸ¤©¨¨¦¢ž˜”Œ…vnf\N@:2.&'+*+++,-,-+(*+2Luš¢0011257877655579:;;;;<<==<>?>???@??@@BA@ABBCFdwywvsqppnmllklljG^moqsssvvuwvvusojc]POIEHFB9+**-CHGK4bD@@CR{mq†HFIJOJHGL‚opmw[GHNLJLJIxyprq†LJNKJIIK’†~ŽŠLMJ–DB:\\]^_^\[†UU\‹ž®ÂÀÆÌÐÓÑÒÌÈ¿°¥˜‘Ž†„‡ˆ†…†‡‰ŠŒ•´·µµ¶··º¹¹¸¶··¶¶´³²±±¯­¬¬ª©¨©¨¨§©¥£¡ Ÿ™—šžŸŸ¢Ÿ Ÿ¢¢¦¥11////123:;;;;;;;::;;<<<>@=;<;:9577<CJMV]W_UMvxzywsqponmlmllmmklnppqssuvvuutsqoia[OGDDEFE9))(((-///2ejmsw?7>A€€jPLYv€`:eH;€~aSYt‚€;DG<S…†€vx‚†‰}<7;{–š887:\\\\^_^XVIP`NWw‹––››—•‘‹‰……~ƒ…„ƒ„„…††‡ŠŒŒ’—¹¹»¾¿½¼»»¹·····¶¶¶µ³´²±±®®®®««««ª«ª«©©ª§§¥¥¥©§¦¥¦¦¤¥¥58;9<<;<=<943321.--*+)&'''''&&&&'&''(')('*(),uyzywtqqoomlmlkmnnmppqsrsrsutvtrpoh_ZPCP1CDG2()(((6/./0145764779:8t~ƒq?::9::::9T}„€~C:;;<;;;<3KlpS2=<99;8:977668^^[[YY[FGHDKEEElz|{vx{{}|z}~}~‚ƒƒ„…‡‡‰‹‰Ÿ¸·¸¿½º··¸¹µ¶¶¶µ³´´´²±´´±²³´¯¯¯­­¬««¬©ª¨§§¦¥¦¥§¦§§¦¤¢£!! !!!   !!    ""! """!"#""#####$##$$$$$$$&(s{|ywurppnllkmmlmnooooqqrrtttrrpnle]WGOM9BBG++,+..6//./113546879:8999:99CB999:;;:9;9;;::<;:;;<;?;<:;:98:<:9998786w“¢šbZ@=F7;A?IZjmqruxwz{y|||}~€€€ƒƒ„„‡Š‹Ž–º¹·»À¿¼»·º¹¶¶µµ´µ´³²²±±²±±±°¯­¬«¬«««ªªª©¨¨§¦¦¦¦¥¥¥¤¢Ÿ      "!""!###$$$&u|}|ywtqpnmlkllllmonopqqqrrrrrpoljc[UHACA@@Evtvtqp`1-./1125676689998888KG9999:::<9:9;:;:;::<:=?=9;::9799:8777878:µ··¹º¼¼ºUKC<8:EYhostrwwwwxyyxyw{|}‚†‡Š–¸¶µ¸¾½º¹¸·µµ´µµ´³³³²°¯±¯¯¯®®­ªªª©¨©©¨¦¦¥¥¤£¢££¢¤¢£¡ŸŸš   !!!!"#$$%'*v€}zxuqpnmlklllmnmnopompppqnollkhbZSLH2A@=C —“‹‡…/../011345678989799IEGYGPSM<9>AAKPSG@;D9?;A8;::99979;878767668³®²´»¶·¸¼nH@@MGclppqtstqstuvvvvxxz}|~~ƒ……‹µ¶µ³´»¸¶´µ´³³´²´³²²²±±¯¯°¯¯­««ªª©©©¨§§¤¦¥¤£¢¢¡¤££›•–•••!"!#"&(*)("&'(/;T`vˆ–Ÿž’ˆ„|xvrqmmmlmlmlnmnnmnnooononkjif_YQLHC@>;A”•—•˜˜—-.../0012446897898??;:BA:;CH9AM<<:7:;>=;>9;::9999:7<;<<;<<;:89d_debfea`\^IHKTkoqnorrrpppopnpqsuuxvxz|„—´´®¯³¸¸¶´³³²³³³²³°°°²°®¯¯°°­­««ªª¨¨§ª¨¨§¥¤¥¤¤›‘“•–•—••&'(*)&'# %,5;QiwŠ’—”‹Ž’’’“”–•”•“”””““••’‰…ƒ}yxusrrqqppoooopononnoonllig`ZTMJGCA?GzuqeZL/-././0033357777888897989=<9;;8988888898:8888899999;===<<=>>>B‹ŽŠ‚xl\XUQQM`q}rlmoppommbklihilnoqssuvx{~“•–•— «¬®°°°±°°°°°±¯°®­¬®¯¬¬¬«««©©§§¨§§¦§¦§ž‘ˆŒ’’”•”‘‹†ƒˆ‰ŒŽŽ‘‘‘‘’““”“””””““’‘“’‘’‘‘ŽŽŒŠŠ‰ˆ†‡ˆ‰‰ˆŠ†…„~~}}{yxxwvttsrrqqqopnqonmlkfaZTMIGC>;>USMIGEE@94.-.//0245776887788698798898877767787676766566689:9984-H[Mg’‘‘‘ŒŠŠ€vlbWRMrmldiihYahcehddhjjmlnpstŠ’“‘’˜——˜£§ª«­®­­­¬­­®­¯­­¬ª«ª§§¨§§¦¦¦¨“…†ŠŒŽŽ‰‚wof‘‘’’“””•”–—–––••”“’’ŽŒŒ‹‹ŠŠ‰Š‹‰ŠŠ‹ŒŒŽŽ™Ÿœ”gHAR]jfjiijgggeddedcbccddaa]XPFA;>@DHHHGMNMMKJHB>;40049=B6:9=788776776677677777557665866666676977C?%,06>DIR`vŠŽ‘‘Žˆ‡‡~zk^]g^^_]Uaaabccbdefhhklnimr}ƒŠŽ”š™––”—§©«¯®¯®¯­­®ª¯°­¬«¬ª¨ª¨¨ª©«…†ˆ‹‹ˆ‡ˆ‡ƒ€lcZTQ‘‘‘ŽŽŒŒŒ‹‹Š‰‰ˆ‰‰‡ˆ‰‡‰‰‹ŒŒ‹‹Ž‘›¢£¢¢  ŸŸŸžŸš›””‘Žˆ‡…†}~||{yvsqpnkjihikmnljihbbbbdcdfeegb`PJKIGGEFFFGIJKKKKKONORTPRTSYZYZZZZZ\\]^^_`cfkrx†“———–š————————•’ˆytndLMRVWXZ\^^_``a`db[fjlptx~ˆ‘““‘—¤©«®°°°°±®­¯­®­­¬¬ªª©ªª«©Ž…†ˆ‰‡ƒ‚€yja[TOLHC‹‹‹Š‰‡‰ˆ‡‡†ˆ‡‡†‡ˆˆ‡‰ˆ‰ˆˆˆ‰‰‰‰‹Š‹‹ŒŒŒŽŽŽ’“š Ÿ¡   žŸŸžŸŸžŸžŸžŸ   ¢¤¥¤¦¤££¡¢Ÿ™–’Ž‹‰ˆ‡ˆˆ‹‹ŒŠŠ‰‰„„…„…‡…†ˆˆˆ‡‰‡‡……„…†……‡‡‰‰Š‹‹Š‰Š‰‡‡††ˆ‡„ƒƒ„‚ƒ‚‚„†…†ˆ‹‘“–šž¡«¬­¬­¬¬«¬«««©§ ›”ˆ~pcXPHCA@HLOQSTVVTPLXbimnpsw|…Ž’•™Ÿ£§ª®±±±²±±¯¯¯¯®®°®°­¬ªª«¬®ƒ†‰‰…ƒ|tg_TOJID?<;‰‡‡†…†…„…………„……„‡…‡ˆˆ‰‰‰Š‰‹‹ŒŒŒ‹‹ŽŽŽ‘‘’šž   ¡Ÿ¡¡¢¢££¥£¥¦¦§¨©©©¨©¨§¨§¨§¦££ š—–——•”••—™˜—••‘’“’“’‘”“’““““““”“•“”““”“”““‘’‘‘‘‘’’‘‘“””–•–—šššž ¢¥¦¨§«²´¶·´¶¶¶´³¬¦¡™„wk^ROKFB=:723438=ISX]beimotyŠ• ¦©«­¯³µ¶´µ´´³±²²±±±²°°¯®¬«ª¬¬„…‰‰…‚|of^NC@A?=:76‡†………„„„…†…††††‡‡ˆˆˆˆˆˆ‰Š‹ŠŒŒŒŽŽŽŽŽŽ‘’–œ £¤¥¥¤¦§§¨¨¨©©©¨«ª««ª¬¬­¬­«ª¨¦¥££ œšš™™šš˜š››œ››™—”““’”””—–˜–—•”••••”•••–••–••—–”•••”••–”––™›œžŸ   ¡ ž£¤¥¥¨©©©¬³´´¶¶³°«¥Ÿ™—„xha\ZYWURPNPPOSUX[^abijpzƒŽ–ž¤ª«­²¶µ´´³²´´µ´³²´´³´±²³±±±±±¯®­®®±”‹Š‹ˆ„|tj]LGA>>:9767Ž‹Š‡ˆˆˆˆ‡ˆ‡ˆ‡ˆˆ‰ˆŠ‰‰‰ŒŠŠŒŽ‘‘’”–••˜™™››Ÿ£§©ª±¬¬¬¬­¯®¯®®®¬­­­¬­®¯¯°¯¯°±¯®¬ª¦¢žœšš™˜˜™™››››šš˜–––•””••––—˜—˜˜˜™›š›˜˜—–––——™™š›šœžŸ¡¢¢£¥¤¥¦¦§©ª¬¬°²±²´µ³µ»¼¹·³­¨¢žžœœœš™–’‡‡ƒ…„ˆ‹•—œŸ¥§¬¯³¶·º¸¶µ´´¶¶µ´¶´³´µ´µ´³³²³²²²²³±±±®­­¯¯°˜«“‰ƒyvcMA>:;::87::‘‘ŽŽŽ“““”“”—–˜™˜™š›œœžžž¡¢¢¥©¬­®®¯°¯°¯¯°²²³³³´³²°±°®±°±±°±±²±°¯¬«©§¤£¡ ¡¢£££¢¡¡žœŸ Ÿ    žžŸŸžŸŸŸ¡  Ÿ Ÿ Ÿ¡¢¢£¤£¥¥¤¥§¨§©©«««®®­¯°±²´³¶µ¸¸·¹º¿¿¿¿º¹µ²¯®¬ª©§¦¦§¨§§§¥§©ª«¯¯¯±³´·»··¸¹ºº»¼ºº·¶µµ·¶µµµ´¶´¶µ¸µ´µ³´µ´³³´³³°°®­«­°•£“ˆ‚zpYB98689:98::•–•–•••—–——˜–˜——˜˜˜ššœ›œœ›žŸŸ¡¡¢¢¤¤¥¦¦§©©«®±³³´³³´´´´´´¶·¶··¸·¸¸·¶¶¶¶µµ³µ´µµ´³²±°®¯¯®­­­­«««ªª¨¨¨¨§¨©¨««««ª«ª«¬«««¬«¨©ªª«««¬­­®®­®¯¯¯°±±²²³²³¶´··¸¸¸º»¼¼¼¼¿ÁÂÂÁÁÀ¿ÀÀ¾À¿½½½¾¾¼»ºº¸º··¸¹¹¸ººº¹»¼»º¼½½¾¿½¼¹··¶¸¸··¶··¶··¶µ´µ¶µµ³¶´µ²´±±¯¯®¯±†›„Œ‹„zrL=53989:8:6*™™™š›š››œ›››œœžžžŸ ¡¡Ÿ¢¡¢¢¢££¥£¥¥¦¦§¨¨¨©ª««®°³µµ··¶¶µ¶µ¶¶··¶···¶¹¸¹ºº»»¹¹º¹¹¹¶¶¶´±±°®°±¯²´³´³²¬­²±°°°±±±²³³³³µ´´´³´µ³³²±²³²²´´³´µ·¶···¶¸¸º¹»¹»»»¼¼¼¼º»¼¼½½¾½ÀÁÀÁÀÀÀ¿¾ÀÃÀÂÂÁÂÀÀÀÀ¿¾½¾¿¾¿¾½¼»»»»¼»½½½¾¿¾¿¾½º··¸º··´·····¸¶¸¶·¶¶¶µ´µµ´´²²°¯°°°«›ƒz†ƒ{tP526899;+ œœžžžž  ¡ ¡£££££¤¤£¥¥¦¨¨§¨¨©ª©©ª«ª«¬¬­¬®¯²µ¶¸¸···¶¶·¸·¹º¼¶¶·µ¸¹ºº»»º»»¼¼¼¼¼¹¹¶·¶·¶·µ¶¶¶··¶¶²²µµµµ¶µµµ·¸¸¸º¹¹ºº»º»¹¹···µ¶¶¹¸¸¸¹¹¹¸¹ººº»»»¾¾¿ÁÁÂÁÂÀÀÀÀ¿ÁÁÁÁÃÅÅÃÃÀÀ¿¿À¿¿½½¼¾¿À¿ÀÀÀ¿ÀÀ½¿¾ÀÀ¿À¿½ÀÀ¿¿¿À¿¿¿¾¾º¸¸¸¸¸·¸·¶¹¸···¸¸·¶··¶µ·µµµ´³²±±°±²œ~‚|{Z25794#žžžŸŸ¡¡¢¢¢££¤¥¥¦¦§§§©©ª©ªª«««¬«««¬¬¬­¬¬­¯°³µ¶··¶·¶µ¸¶·¸·¹¸¸¸¹¹»»¼½½½¾¹¼½¿½½½½¼»º¹¹¸¶··¸»ºº¹¹º··¶µµµ¶¶¸¸¹º»»»»¼½»½¾»»º¹º»º¹»º»º¼»ºº¼»»¼¼¾¿ÁÂÂÃÃÂÄÅÄÂÂÂÂÁÃÂÄÆÅÅÂÃÀÀÀÁÀÀ¿¾½¾ÀÁÁÁÃÃÁÁÂÀÂÃÂÂÁÀÁÁÁÁÁÀÀÀÂÀÁÁ¿¿½º¸º¹¹¸¹¸¹¸¸¸¸¹¸¸··¹¶··¸·µµ³³³²°¯°²±™ž…}zv86/žŸŸŸ¢¡¡¡¢¢¢£¤¤¤¦¦¦¨¦¨¨¨©ªªªª««¬¬««¬¬¬¬­­®¯®¯±³µ¶·¸¹·¸¸¸··¹¹ºº»¼¼¾¾½½¿¾¿¿¿¾¿¿¾¾¾¾¼¼»¹ºº¹¸¹¸¹º¹¸¸¹¶¸·¶¶¸¸¸º¹º½½½½½¾½¾¿¾¾½»»»»ºº¼»¼¼¼¼¼¾¼½¼¾¾À¿ÀÁÂÂÂÃÃÃÂÁÀÂÁÁÁÃÂÃÄÃÄÂÂÂÁÀÀÀÀÀ¿¿ÁÂÃÄÄÃÄÆÆÃÅÄÆÅÄÄÄÃÃÂÃÁÃÃÂÁÁÁ¾¾½º»»ººº¹¸¸º¸¹¹º¹¹¸¹¹¸¸···¶¶µ´³³³±²³±µžŸ‰|{yb$ ŸŸž  ¡¢¢£¤¤¥¦¥¦¦¥¦§§©©ª©ªª««««««««¬«­­­­®°°²µµ¶··¸·¶¶·¸¸¹¹¹¼¼¼¼½¼½½¾¿¾¿¿¾¿¿¾¾¾½½»»»¹¹º¸¹¹ºº»º¹º¹¸¸¸¸¹¸º¹¼½¾¾¾¿¾À¿½¾¾¾½½½¾½¼¼¼½½½½»¼½½¾¿ÁÂÂÂÁÂÂÂÂÄÃÃÁÂ¿ÁÂÁÁÂÂÃÃÄÅÂÃÂÁÂÁÀÀ¿¾ÁÂÅÅÆÆÇÇÆÅÆÇÆÆÆÆÆÅÅÄÄÄÃÃÃÁÃÂÁÀÁ½¼»»¼»»»¹ºº¹º¹º»»º¹¸»·¹¸º¸¶¶¶¶´±³´³³³°£¥‘wysU¡ ¡¡¡¢¡££¢¦¤¥¥¥¦§¦¨©©ªªªª««¬««¬¬¬­¯®¯°¯°¯°±±²´¶·¸»¶·····¸¹¹º»¼»¼½½¼¾¾¿¾¾¿¾¿¿¾¾¾¾¼»¼»º¹¹º»º»ºº¼¼º»º¹º¹¹¹¹»¼¾¿¿À¿À¿¿À¾¿¾½¼¼¼¼¼¼½½¾½¾¼½¾¾¿ÀÀÁÁÁÃÃÃÃÃÄÄÄÂÂÁÂÁÂÁÃÄÅÅÅÉÅÅÅÅÂÃÄÂÂÂÂÅÆÈÉÊÊÉÉÉËÊÊÈÈÉÇÈÅÅÅÄÄÄÂÃÁÂÁÀÀ¼¼½»ººººº¹ºº»¼º»¼º¹ººº»»¹¹º¸¸¶·µ´²²²³²³§ ˜yspW!  ¡¡£¢£¤£¤¤¥¥¦¦¦¨¨©©©ªª«©««­­¯®®®¯¯¯¯°­°°°±³³´¶·¸¹¶µ¶··¸»¹º»º»¼¼½¼¾¿½¿¿¿¿¿ÀÀ¿¿¾¾¿½½¾½¼»»¹ººº»»º»»»¹¹»¹»¼¼½¾¿ÀÁÀ¿ÀÀ¿¿À¿¿¾À¼½½¼½¾½½¿ÀÀ¿¿¿ÀÁÂÃÄÄÄÅÅÅÆÆÅÄÃÃÃÂÃÃÄÄÄÆÇÈÇÆÆÆÅÄÅÃÄÅÅÆÈÉËÌËËÌËÊÊÊËÊÉÈÇÇÆÆÅÅÄÃÄÁÂÀÀ¿¾½¼¼¼º¼»¼¼¿½½½½¾¼½¼¼¼¼»»ºº¸··µ¶´´µ´²±³²´«¡…rmT$¢¡¢££¢££¤¥¥¥¦§§¨©©ªªª«««ª­¬¬­¬­­­®®®®®°±²±²³´¶·¸¹¹¸¸¹¸¸¸º»»¼»¼¼½½¼¿¾¿¿À¿ÀÀÁÀÀÂÀÁÀÀ½½½¼½¼½½»¼¼¼¼½¼¼¼º»»»¼¼½¾ÀÀÀÁÁÀÁÁÁÁÂÁÀ¿¾¾¿¾½¿¿¿ÀÀÀ¿ÀÀÁÂÃÃÃÆÅÅÃÆÇÆÅÆÄÂÃÂÂÃÄÄÅÄÅÅÅÄÅÃÃÃÂÂÃÄÄÉÉÌÌÌÍÍÎÍÍÎÌÌÌËÌÊÉÉÉÈÇÆÆÃÃÁÂÀÀÁ¿¾À¿¾¿¾¿¾¿ÀÁ¿¿¾½»»ººº¹ºº¹¸¸¶¶µ´´³´±±³²´¶³¥ª›ym[+¢¢¢¢££¤¤¤¤¥¦§§¨¨©©§ª«««««¬­¬¬­®®®®®°¯¯°±±²²³´¶¸¸¹º¹¹¸¸¹º¹»º¼¼¼½¼½½½¿¿¿ÀÀÀÀÁÁ¿¿ÁÁ¿¿¾½¼¼¼½¼½½½½½¼½¼½¼º¼½½¾¾ÀÀÁÂÁÂÁÂÃÂÂÁÂÂÁ¿¿¿¿¿ÀÀ¿¿ÀÀ¿ÀÁÁÁÂÃÅÆÆÆÆÇÈÉÇÆÆÄÄÄÄÃÃÃÅÅÅÅÅÄÅÅÃÅÅÄÃÅÆÆÉÊËËÎÎÏÎÏÏÎÍÍÍÍÍËÊÊÉÉÇÈÆÆÅÄÄÃÃÂÁÀÂÀÁ¿À¿¿¿ÁÀÀ¿¿½»»½º¼º»»¹¹¸···µµµµ´´´²³µ´µª¢¡‹mhA!¢¢¢£££¥¥¥¥¥§¦§©©©©©©«««««¬­®®­­®®¯¯¯°°®±°²²³³µ·¸¹º¸¹¹¸»ºº»»»»»¼¼½¾¾¿¿ÀÁÁÀÂÀÂÁÁÁÀ¿¿¿¿¾¾½½½½¼½¾½½¼½¼½¼¼½½¾¾ÀÁÂÂÂÂÂÄÄÄÃÂÂÂÁÀÁ¿ÀÁÁ¿ÀÁÁÀÁÂÂÂÃÃÅÅÇÆÇÆÈÈÉÈÇÇÆÅÅÆÄÄÆÇÇÈÇÇÆÅÄÅÄÄÄÄÅÄÆÉËÌÍÏÎÍÏÏÐÎÎÏÎÍÌËËÊÊÊÉÇÇÇÆÄÄÃÂÁÂÀÁÀÁ¿ÀÀ¾¿¿À¿¾¾½½½¾¼»½»»»º¸¸¹¸¶¶¶µµ¶´´´´µ¶¶±¦Ÿ›}gQ-¢£££¤¤¥¤¤¥¦¦§¨¨©©©©ªª¬«¬¬­­®®­­®¯¯¯¯±±°°²²±³´µ·¹¹¹»¹¹»¹¹¹º»¼»»½½¼½¿¿ÀÀÁÀÀÁÂÁÁÀÀÀÀÀ¿À¿¿¾½À½½½¾½½½¾½¼¼¼¼¾¾¿¿ÂÂÂÂÃÄÃÄÃÂÄÃÃÂÂÁÁÁÁÀÁÁÂÁÂÂÂÃÂÂÃÅÆÇÇÇÈÈÉÉÉÈÈÆÅÄÃÇÆÈÇÈÇÈÇÆÆÆÅÆÄÃÄÄÆÈÉÊÌÍÎÎÎÏÐÐÏÏÏÏÍÌÌËÊÉÊÉÈÈÈÇÆÆÄÃÃÁÀÁ¿À¿¿¿¿¿¿¿¿¿¿¾¾¾½½¼¼»¼»»¹¸º¹·¹·¶·µµ´´µµ´µ´´¬£š‹r[?$¤£¤£¤¥¥¥¥¥¥¦§§©¨¨©ª««¬¬­®®®®®®¯®°°°±°²±²³³´µµ·¸¹¹¹ºº¸º¹º¹º»»º¼¼¾¼½¿¿¾¿¿ÀÀÁÁÂÀÁÁÀÀÀ¿¿¾¾¾¼½½¾¾¾¾¾¾¾¿¾½¾½¾¾¿ÀÁÂÄÃÃÃÅÄÄÄÃÃÂÃÂÃÃÁÁÁÂÁÁÁÂÁÂÃÂÅÆÇÆÈÈÉÉÉÈÉÉÊÉÆÆÆÆÆÆÇÈÈÉÉÈÈÇÇÇÆÅÅÄÅÇÈÊËÌÌÏÏÏÏÐÏÏÎÏÏÏÍËËËÊÊÊÉÈÈÇÆÆÄÄÂÁÀÁÁÀÀ¿¿¿À¿À¾¿ÀÀ¾¾¿¿¼¼¿¾¼»»º¹¹ºº··¶µµ¶¶¶¶µ´´´¶±¨Ÿ™†iM££¤¦¥¥¦¥¦¦§§¨¨§§ªªª«««¬¬­®®®¯®¯¯¯°°±²³²³²³´´¶··¹¹¹»»¹º¹ºº¹º»¼¼¼¼¼¾¾¾¿¿À¿ÁÁÁÁÁÂÁÀÀÀ¿¾¾¾½½¾¼¾¾¾¿¿¿¾¿¾¾½¼¿¿¿ÁÀÂÄÄÃÃÄÄÃÅÅÃÄÂÂÂÂÂÂÂÂÁÂÃÃÃÃÃÅÅÆÇÇÇÈÉÉÉÈÉÉÊÉÈÇÆÆÅÅÆÇÈÊÊÈÈÈÈÇÆÆÆÇÆÇÈÉÊËÎÎÎÏÏÏÏÏÏÏÎÍÌÍËÊËÊÊÊÈÇÇÅÅÄÃÂÂÂÀÁÁÀÀÀÁÁÁÂÁÁÁÁÁÀÀ¿¿¿¿¿¾½¾½º»º¸····¸¸¸·µ¶·´´µµ¶°¦ž”€£££¥¥¦¦¦§§¨¨©©©ªª««««««®­®®®¯®°°±±²²²³³³³´´µ¶·¸¹ºº»ººº»º»º»½½½½¾¾¾¿¿¿¿ÁÀÀÁÂÁÁÁÀÁÁ¿¿À¿¾¾¿¾¿¿¾¿¿À¾¾¿¿¿¿¿ÀÁÀÁÂÃÄÅÅÃÅÄÅÅÅÄÃÃÃÃÄÃÄÃÂÃÃÅÃÄÄÄÅÅÄÅÈÈÈÉÊÊÊÊÊÊÉÉÈÈÇÇÇÇÇÈÇÉÈÈÇÆÇÈÈÉÈÈÇÉËÌÎÏÏÐÏÏÏÏÏÐÎÎÍÌÌËËÊÊÊÉÈÇÇÆÅÄÄÂÁÂÀ¿¾ÀÀÁÁÂÂÁÁÂÂÂÁÀÀÁÀÁ¿¾¾½¾¾»»º¹¸¹¸¸···¶¶¶µµ´µµµµ²¬¥›¤£¤¤¥¥¦¨§¨§¨©ª©©««««¬¬­®­¯®¯°°°°°²²²²´³²³´³´¶·º¹ºº»º»¹º»ºº¼½¼½¾¾½¾¿½À¿ÀÁÂÂÂÁÁÂÂÁÁÁÀÀÀ¿¿¿¿¿¿¿¿¾À¿½¿À¿¿ÀÀÀÁÂÂÄÅÅÄÅÅÄÅÆÅÅÅÅÃÃÃÄÃÄÄÅÅÆÃÄÅÅÆÆÇÇÉÇÉÊÉÊËÊÊÊÊÊÈÉÈÇÉÇÉÊÉÈÊÉÈÇÉÈÈÉÉÈÉÊÊÍÍÏÏÏÐÏÐÏÐÏÎÏÍÍÌÌÊÊËÊÉÉÈÇÆÆÄÃÃÁÁÁÀÀÀÀ¿¿ÀÀÁÁÁÁÂÁÀÀÀÀÀ¿¾¿½½¼»»»ººº¹¹·¹¸¶µ·¶³´¶³´´µ¶²«¢¢¢£¥¤¦§§§¨¨ªªª««««¬­­­®®¯¯¯±°°±±²²²³±²³´´´µ·¸¹ºº¼»ºº¸¹º¼»½½¼»½¾½¾¿¿¿ÀÁÁÁÁÁÂÂÂÁÂ¿ÂÁ¿À¿À¿¿¿¿¿¿¿ÀÀ¿¿¿¾ÀÀÀÁÁÂÄÄÅÅÆÆÅÆÅÆÅÄÄÄÃÄÃÄÃÅÅÄÅÄÄÄÅÅÆÆÆÇÈÉÉÉÊÊÊÊËÊÊÊÉÊÊÈÉÊËËÊËÊÊËËÊÉÉÊÈÊËËÌÍÎÎÐÐÐÐÐÏÏÏÏÏÏÍÍËÊËËÊÉÉÈÈÅÆÅÄÃÃÂÁÀ¿¿À¿¿¿¿À¿¿ÀÀÀ¿¿¿¾¿¾½¿½¼½º»»»º¹¹º··¸¸¸··¶¶¶µ³´·¶µ¶¢¡¡¢¢£¤¥§¦¦¨¨¨¨©ª«ª«¬®¬¬¯¯¯®¯°°±²²²²²±³²³³µµ¶·¸¹ºº¼¼ººº»»»¼½½½½½¿¾¿À¿ÀÀÁÁÂ¿ÂÂÂÂÂÂÁÁÂ¿¿¾ÀÀ¿¿¿¿Á½ÁÀÀÀÀÀÀÀÁÂÃÃÄÅÆÆÆÅÆÆÆÆÅÂÄÄÄÄÃÃÃÄÄÃÅÅÅÄÅÇÇÇÈÉÊÈÊÊÊËËËÌÊÊÊÉÉÉÈÊÊÊËËÊÊÊÊÊÊÉÊÊËËËÌÍÎÏÏÏÎÏÎÏÏÏÎÏÍÌÌÊÊÊÊÊÈÇÇÇÅÅÄÂÂÂÁÀÀ¿¾¾¾¿¿À¿¾¿¿¿À¿¾½¿¾¾¾¿½»¼»»¼»¹¹¸·¹¶¹¸¸¸¸·¸··¶¶µµ´´ ¡¡¡¢¢¢££¥¥¦¦¦§§©¨©ªª««¬¬­­­®¯°°²±±²±³²³´´µ¶¶¸¹¹¹ºº»»ººº»»¼¼¼¼½½¾¾¿¿¿ÀÀÁÁÁÂÃÂÂÂÁÂÁÀÁÁÀÁ¿À¿ÀÁÀ¿ÀÀÁÀÁÁÀÁÀÁÂÃÃÄÅÅÆÆÆÆÆÅÆÅÅÅÅÅÆÅÄÄÄÄÄÅÅÄÆÇÇÈÈÉÊÊÊÊÊÊËËËËËÊËÉÉÈÊÊËÊËÌÊÊÊÉÉÉÊÊÊÊËËÊÌÌÍÎÍÎÎÍÎÎÍÍÍÌÊËÊÊÉÈÉÈÆÇÆÅÄÃÃÂÁÀÀ¿À¿¾¾¿¾À¾¿¿¾¾¾¿½¾½¾¾¼½¾½¼»»»¹º¹¹¸¸¸¸··¸¸··¸·¶·´³³³     ¡£¢££¥¦¥¦¦§¨§¨©ª««¬¬«¬­­®®¯¯¯°±±²²²³´µ´¶·¸·¸¸ººººº¹º»»¼½º¼¾¼¾¾¿ÀÀÀÁÁÁÀÁÂÂÁÂÂÁÀÁÀÀÁÀÀÀÀÀÁÀÀÁÀÁÁÁ¿ÁÁÁÂÂÃÃÄÅÆÆÆÅÆÇÆÆÅÅÄÆÆÅÄÄÄÄÄÆÆÆÇÇÇÈÇÈÈÉÉËËËËËËÊËÊÊÉÉÉÉËÊÊÊÊÊÊÉÈÈÈÈÉÈÉÊËÊËÌËÍÍÍÍÎÍÍÍÌËÌÊÊËÉÉÉÈÇÈÆÆÅÃÁÀÁÀÀ¿ÁÁ¿¿¿½¾¾¾¾¾¾¿¾¼¼½¾¾¿½¾½½½»»»¹¸¹»¹¸¹····¶µ·µµµµ´²³±žžžŸŸ¡ ¢££¤¤¤¥¥¦§§¨¨ªª©ª«¬««¬­­­®®¯¯¯°±°±²´´´µµ¶·¸¸¹¹¹¹¹ººº»»¼»½½¿¾¾¿¿ÀÁÁÀÀÁÁÁÁÁÂÁÀÁÀ¾¿À¿ÀÀÁÀÀÁÀÀÀÀÀÁÁÂÁÃÂÃÄÅÅÆÆÅÅÆÆÆÆÆÅÄÆÆÅÅÄÅÆÆÆÇÇÇÆÇÈÉÉÉÈÊÊÊËÊÊËÊËÊÊÊÉÉÉÊËËÊÊÊÉÈÈÈÇÈÈÈÉÉÊÊÉÊÊËÌÌÌÌËÌÌËËÌÊÉÊÈÉÈÈÈÈÇÆÅÃÂÂÁÁÀÀÀ¿¿À¿¿¿¾¿¿¾½¿½½½½½¾¾½½½¼º»ºº¹º·¹··¸·¶···µ··µ´´³³³±ŸŸ   ¡¢¢¢£¤¤¤¦¦¦¦¨¨©¨§ªªª«ª«¬«¬­®¯®¯¯°°±±²´´µµ¶·¸·¸¹¸¹¸º¹ºº»¼¼¼½½¾½¿¿¿¿ÀÀÁÀÀÁÁÁÀÀ¿¿À¿À¿¿ÀÀÀÁ¿¿ÀÀ¿ÀÀÁÁÂÀÄÄÄÄÄÅÅÅÅÅÆÆÅÆÆÄÅÆÅÄÅÅÆÆÇÇÆÆÇÈÈÉÉÊËÊËÊÊÉÊÉÊÉÉÉÈÉÈÈËÉÉÈÊÉÇÈÈÇÇÈÇÈÇÇÈÈÈÈÉÊÊËÌËËËÌÌËÊÊÊÊÉÊÉÉÉÇÇÆÅÃÃÃÁÁÁÁÁÁÀ¿ÀÀ¿¿¿À¿¿¿¿¾¿¿¿¿½¼½¼º»º»ºººº¹¸¹¹¸¸····¸¶·´³´´²±œŸžŸ ¡¢¢¢££££¤¥¥¦§§¨§¨¨©©ªª««««¬«¬­­®®®¯°°²²´µµ¶¶·¶¶··¸¸¸ºººº»»¼¼½¾¾¾¾¿¿ÀÀÀ¿¿À¿À¿À¾½¾¿¿¾¿¿¿¿ÀÀ¿¾À¾ÀÀÀÀÁÁÂÃÃÄÄÅÆÅÅÅÆÅÅÅÄÆÆÅÅÅÅÅÅÅÅÆÅÇÇÇÈÈÉÊÊÊÉÉÊÊÉÉÊÉÉÈÈÈÈÈÈÈÉÈÈÇÇÇÈÇÇÈÈÆÈÈÈÇÉÊÉÊÊËËÊÊÊÊÊÊÉÊÉÉÉÈÇÇÆÅÅÄÄÂÂÁÁÁÁÁÀÀ¿¿À¿¿¿¿¾¾¿¾½¾¾¿¾½¼½½¼½¼»ºº»º»ºº¹¹¹¶º¸·¸·¶µµ´³±±œœžžž  ¡¡£¢£££¤¤¤¥¦¥¥§§§§¨©©¨««ª«¬­«¬­®¯¯°°±³³³´µ¶¶¶¶¶···¸¸¹¹ºº»¼»¼½½½¾¿¾¾¿¿¿¿¿¾¾½½¾½½¼¾¾½¾½¿¿¿¾¾¾À¿¿ÁÀÁÂÂÃÃÃÄÄÅÄÄÄÄÄÃÃÄÄÄÄÄÃÄÄÄÅÅÅÅÆÆÇÇÈÈÉÉÉÉÉÊÉÊÉÉÇÈÈÈÇÇÇÇÈÈÇÆÈÈÈÈÇÈÈÈÈÉÉÉÉÊÊÊÊËÊËÊÊÊÊÉÉÈÉÇÆÆÆÅÄÃÃÃÂÂÁ¿ÀÀ¿À¿¿¿¾¾¿¿¿¾¿½½¾¼½¼½¼»º½¼¼¼¼¼º»»ºº¹¹ºº··¸¸···¶µµ´³³²››ž Ÿ Ÿ¢¡¡¡¡¢¤¤¤¥¥¤¥¨§§§¨©ª©©ª¬«««¬¬­®®®°±±²³´³´µµµµ¶µ¶·¸·¸¹¹¹ººº»¼»¼¼½½½¾¼½¼¾½½½¼¼¼¼½¼¼½½½¼½½½¾¾¾¿¿¿¿ÀÁÂÂÃÃÃÄÄÄÃÃÁÃÃÂÃÃÃÃÃÄÄÃÄÅÄÅÆÇÇÆÇÉÇÈÉÉÈÉÈÉÈÇÈÇÆÇÆÆÇÇÇÇÇÆÈÉÈÈÇÇÇÇÈÉÉÉÉÉÉÉÊÉÉÉÊÊÉÇÈÈÆÆÆÄÆÅÄÃÃÂÂÂÂÀÁÀ¿¾¾¾¾¾½¾¾¿¾½¾¾¾¾½½¾¿½¼½½¼¼½»»»º¹ººº¹»¹¸¶·····´·¶µ³´³œ›œœœžž¡Ÿ¡¢¡£¢¤¤¤¦¤¥¦¦§¦§¦¨©©¨ªªª«¬¬«­­­®®°°²±²³´´³µµµµ··¶·¸¹¹¹¹¹»¼»»»»»½¼½¼½¼¼¼»¼¼½½¼½¼¼¼½¼½¼¾¾¾¾¾Á¿¿ÀÀÁÂÁ¿ÂÃÂÂÃÂÂÂÂÂÂÂÂÂÂÃÄÄÅÆÅÅÆÆÇÆÈÇÈÇÈÉÈÇÇÉÈÈÆÇÅÆÆÆÆÇÇÆÈÇÇÈÇÆÆÅÆÆÇÇÈÈÇÉÇÈÈÈÈÈÈÇÈÇÆÇÇÆÅÄÃÄÄÃÃÃÁÁÁÀÀÀÀ¿¾½¾¾¼¼¿½¿¾¾¾½½¾¿¾¿½¾½¿½»¼»º»º»¸¹ºº¹¸¹·¸¹····¶¶´´³²šš›››œœŸŸžž ¡ ¡¢¢££¤¥¥¥¥¥¦§§¦§¨©¨©©ªª««¬­­­®°°±²±²´³´´´µµµ¶¶¶····¸¸¹¹ºº¹ºº»»¼»º»»»»»¼»»»¼»¼¼½½½¼½½¾½¿¿¾¾¿ÀÁÀÀÀÀÂÂÂÂÂÁÁÂÂÁÂÃÃÄÅÄÅÄÆÆÅÆÆÇÇÇÇÇÇÈÇÇÈÈÉÇÆÆÆÆÆÅÆÇÇÆÈÈÇÇÇÆÇÆÆÅÆÅÆÈÇÇÇÇÈÈÈÈÇÇÆÄÅÅÆÆÆÄÄÄÃÃÂÁÂÁÁÀÀÁÀ¿¿¾¾¾¾¾¾¾¾½½½¾¾¾¿¾¿¾½¼¼¼»»¼»»º»ºº»º¹¹¸¸¸ºº¸····µ´µ´´ššš›œœ›œœžžžŸŸ ¡¡¢£¢¤££¥¤¤¤¦¥¦¦¨¨¨¨©©©ªª««­­­®¯±±²²±²³³³´µµ´´µµ¶¶¶···¹¸¹¸¹¹»ººº¹º¹ºººº»ºº»»»¼»½¼¼½½½¾¾¿¿À¾¿¿À¿¿¿ÁÂÀÁÁÂÁÁÁÂÃÃÄÃÃÄÅÅÅÅÅÆÆÅÆÇÆÇÇÇÇÇÇÇÇÇÆÆÅÆÆÇÇÇÆÆÆÇÇÆÇÇÆÆÆÇÆÆÆÇÆÆÆÆÈÇÇÆÆÆÅÄÄÅÅÃÄÃÂÂÃÂÂÁÂÁÁ¿¿ÀÀ¾¿¿¾¾½¾½¼¾½½½½¾½¾½½½¼½¼¼»»¼¼º»»º¹»º¸º¸¹¹¸¸¸·µ¶··µ·µ´˜š™ššš››œœžž   ¡¡¡¢¢¢£¤£¤¤¥¤¦¦¦¦¨¨©©ªª«««¬¬­®®°°±²²²²³²´³³³´µ¶µ¶·¶····¸¹º¹¹¹¹¹¹º¹¸¸¹¹¹ºº»º¼»»»»»½¼¼¼¿½¾¾¿À¿À¿¿ÀÀÁÁÀ¿ÀÂÁÂÃÃÃÃÃÄÄÄÄÃÄÅÅÅÅÇÆÆÆÆÇÈÇÇÈÆÆÆÆÅÆÆÆÆÆÅÆÅÆÆÅÆÅÆÅÅÆÅÅÅÆÅÅÆÆÆÅÆÆÅÅÄÅÅÄÅÂÂÁÁÃÀÂÁÁÁÀÀÀÀ¿¿¿¿¿½¾¿½½¾¾¼½½¾¾¾½½¾½½½¼¼¼»½¼¼½¼»»¹¹»¹º»º¹¹¸¸¸··¶·µ´—˜—™™šš››››œŸžŸŸ ¡ ¡¢¢£££££¤¥¥¦¥§§§¨©ªª©ª««­¬®¯®¯°°°°±±²²³´³´µµµµµ¶···¸¹¸¸¹¹¹¸¸¸¹¹¸¹¹¹¹º¹ººº»º»¼»»¼¼¼½¾½¿¿¿¿¿¿ÀÁÀÁÁÁÁÁÁÂÂÂÄÂÂÂÃÃÃÃÃÄÃÆÄÅÆÆÆÆÇÆÆÇÇÆÆÆÅÆÆÅÆÅÅÄÅÅÄÄÅÄÅÄÄÅÄÄÅÆÅÅÅÃÅÅÅÄÆÅÄÃÅÅÅÄÄÃÃÂÂÂÁÂÂÁÀÁÁÁ¿À¿¿¾¾¾½¿¿¿¾¾½½½¾½¾¾¾¾¾¾½¼¼½½½½½½½»ºº»º»¹º¹¸¸¹¸···¶¶µ””—––˜™™š™ššš››ŸŸŸŸ ¢¢¡¢¢££¤¤¥¥¥§§§§©©©ªª«¬¬­­®¯®¯°°°±°²±²³´³´µµµµ¶¶··¸¸···¸¶·¹¸¸¸¸¹¸¸¹¹¹¹º¹ºººº¼¼½½¾¾¾½½¾¿¿ÀÀ¿¿ÁÁÀÁÁÁÁÁÁÁÁÁÂÂÂÂÁÂÃÄÃÄÄÄÅÅÆÆÅÆÅÅÅÄÅÆÄÅÅÅÄÄÅÅÄÃÄÄÂÄÃÃÅÄÄÅÃÆÃÄÃÄÅÅÄÅÄÃÃÄÄÄÅÅÄÄÃÃÁÁÁÁÂÁÁÁÁÁÀÁÀÀ¾¾¿¾¾¿¾¾¾¿¾¿¿½¾¼½¾½½¾¾¿¾¾¾¼¼½¼»»¼»¼»º¹º»¹¹¸¸¸·µµ““”•––—˜™˜™˜š›››œœžžŸ Ÿ¡¡¡¡¢£¤¤¥¥¦¥¦¨§¨©©ªª«¬¬­¬®¯®®¯°¯°±±±²°³³´´´µ¶µµ¶·········¸···¸¸¸·¸¸¸¸¹¹ºº»»»»»½¼½½¿¿À¿¿¿¿¿ÂÁÁÁÀÀÀÀÁÁÁÁÁÂÁÁÁÂÂÃÃÄÃÃÄÅÄÅÅÄÄÄÃÄÄÄÃÃÃÃÃÄÃÄÄÄÃÂÃÃÄÅÅÅÅÅÄÅÄÄÄÅÃÄÃÃÄÃÄÄÅÅÅÄÄÂÂÁÂÁÁÂÀÁÀÁÀÁÀÁÁ¿¿¿¾¿¾¾¾¿¿¿¿ÀÀ¼¿½¾¿¿¾¾¾¾¾½½¼¼»¼¼½»¼»ººº»»º¹¸¹··µµ“’’“”””•————™™™šš››œ›œžŸŸ  ¡¡¡££¤¥¥¥¥§¦§§©¨«ª««­­®­®­¯¯¯¯¯¯°¯±±²³´´´´´µµµµ¶··¶¶¶··¶¶··¸··¸¸¸¹¹¸¹ºº»ºº¼»½½¾¾¿¿¿¿¾¿¿ÀÀÀÀÀÁ¿ÀÀÁÀÀ¿ÁÁÁÂÁÁÂÃÁÂÃÂÃÃÃÂÂÂÃÃÃÄÄÃÃÂÃÁÂÃÃÂÃÂÃÃÃÄÅÅÄÅÅÄÄÃÄÅÃÃÃÃÄÄÃÄÄÃÃÃÂÃÂÁÂÁÁÁÁÁÁÁÁÀÁÀÀÀÁÀÀ¿¿¿¿¾¾¾¿¿¾¿¿½¿¿¾¿¿¾¾½¾¾½½½¼½¼¼¼¾»»º¼»¹º¸·¸¸··¶‘‘““’””–••—–—˜™™™ššœšœž ŸŸ ¡¡¢£¤£¦¥¦¦§§§¨©ª©««¬­¬­­­®®®®¯®®¯°²±±³³´´´´´´µµ¶µ¶µ¶¶¶¶·¶¶·¶··¸¸¸¸·¸¸»º»¼»»¼½¾½¾¿¾¾¿¿¿¿ÀÀ¿Á¿¿ÀÀ¿ÀÀÀÁÁÁÁÁÁÀÁÂÁÂÁÂÂÁÁÃÃÃÂÂÃÂÁÂÂÂÃÂÄÃÂÂÂÂÃÃÄÃÄÄÅÅÅÄÅÄÄÄÃÃÄÄÃÃÄÃÃÂÂÂÃÂÁÁÁÁÁÁÁÁÁÀÀÀ¿ÁÁÁ¿¿¾¿½¾¿¾À¿½¾¾¿¿¾¿¿¿À¿¾½½½½¾¼½½½¼½¼»»»»º¹¸¸¸¸··¶ŽŽ‘‘’“““””•”•––——–™˜š›ššœœœž  ¡ ¡¢¢££¤¥¥¦§§¨¨¨©«¬«¬«««¬¬­®­­­®®®°°±±²²³´³´³´´´´µµµµµ¶¶µ¶µ¶···¸··¸¹¸ººº¹»»»½¼½¾½¾½¾¿¾¾¿¿¿½¿¿¿¾¿ÀÀÁÀÁÁÁÁÁÀÁÁÁÂÁÀÀÂÁÃÁÁÂÀÀÁÀÁÂÂÃÃÁÃÂÃÃÄÂÃÃÄÃÄÄÄÅÄÄÃÄÅÄÃÃÄÃÄÃÃÃÂÃÂÁÁÂÂÁÁÀÀ¿ÀÀ¿¿ÁÁ¿¿¾¾¾¾¾½¾¿¾¿¾½¾¾¿¾¾¿¾¾½¾¾¼¼¼½¾¾¾¼½¼»»¼¼»º¸¹·¸··¶¶‹Ž‘‘’“““””””•–—˜—™˜™šššœœœŸžŸ  ¢¡¢¡¤£¤¥¤¦¦§¨¨©«ª«ª««¬«««¬¬­¬®®®°¯¯±±±²²³³³³³´´´´µ´µµ´´¶¶¶¶·¶··¸¸¸¹ºº¹º»»¼¼½½¼½½¼¾½¾½¾¾¾¾¾¾¿¿¿ÀÀÁÁÁÀÀÀÁÀÀÀÀÁÀÂÁÁÀÀ¿ÀÀÀÀ¿ÁÁÂÂÂÁÁÁÁÃÂÂÂÃÄÄÄÃÃÂÄÃÂÃÂÃÄÂÃÃÃÃÃÂÃÁÁÂÁÁÀÀÀ¿ÀÀ¿¿¿½¿¿¿¾½¾½½½¾¾½½½¼¼½½¾¾¾¾¾¼¾¾¾½½¼½¾¾¾¼½¼¼½»»ºº¹¸¸¹¸·¶¶ŠŒŽŽŽ’‘’’“”””•–—–—˜˜™™š››œœžžŸž  ¡¡¡£££¥¥¥¦§§¨©©©«ªªª«ª«¬¬¬¬­­®®¯°°°°°±²²²²³²´³´´´´´´µ´µµ¶¶¶¶··¸¸¸¹º¹ººº»º»»¼¼¼¼½½½½½¾½½¾¿¾¿¿ÀÀÀÂÁÀÀÀÁÀÁÀÁÀÀÀÁÀ¾¿¿À¾ÀÀÀÁÂÁÁÁÁÁÂÁÂÂÂÂÃÂÂÂÃÂÂÁÁÂÂÂÂÂÁÂÃÃÁÃÂÀÂÁ¿ÂÀÀÀ¿¾¿¾½¾½¾¾½½¼¼¼½¾½½½½¼½»¼¼»½½¾½¼½½¿¾½¾¼½¾¾½¼¼»¼»º¸¸¹¹¹¹¸·¶¶Š‰‹ŒŒŒŽŽ‘‘’’“’“”•”–––˜˜™ššš›œžŸžŸ¡¡¡¢£¤¥¥¦¦§¨¨¨©©¨©ª©ªª««¬¬«¬­­®¯¯¯¯¯°±²±²±²²²³³´´´´³´´µ´´µµ¶··¸¸¹¸¹ºº¹»ºº»»ºº»»º»¼¼¼¼½¾½¾¾¿¾¾ÀÀÀÀÀÀ¿¿¿À¿ÀÀÀÀ¿¾¾¾¾À¿À¿¿ÀÀÀÁÁÀÁÀÁÁÃÂÁÁÁÁÀÁÀÁÂÂÀÂÂÁÃÂÁÂÁÁÀÀÀÀÀ¾¿¿¾½½½¼¼½½½½¼»¼¼¼»½¾¼»¼»»½½¼¼½½¼½½¼½¾¼½½½½¾¼º»ºººº¹¸·¸¸¸¸·¶¶€€€€‚}€~€~€€€€€~€€€€€€~€€€€€€€€~€~€€~€~€€€€€€~€~€€€€€€€€€€€€€€€~€€~€€€€€€€~€~€€~€€€~€€€€~~€~€€~€€€€~€~€~€€€~}}‚€~€~€~€€€€€~~€€~€x}‚}~€ƒ}€€€€~€€~€€€€€€€€€~€~€€~}€€€€€~€€}€€€€€~€€~€~€€€~€€€€€€~€€€€€€€~€€€€€€€€€€€€€€€~€€€~€€~€€€€€€€~€€€€€€€€€€€€€€~~€€€€€€€€}~€€€€€€€€}‚}{…z‚}~ƒ|€~~€~}€~€~~}€~~€~€€}€~€€€€€~€€€}€€€~€€€€~€~€€€€€€~€€€€~€€~€~‚~€€€€€€€€€€€€€€€€~€€€€€€€~€€€€€€~€€€~€~€~€€€€€€€€€€€}~€€€~€€€€€~~€€}€€€€€~‚}ƒ|‚|€~€€€€w~€}‚}€~€~€€€}~€€~€€€€€€~€~}€€~€~€€€€€€€€€~€~€€~€~€~~€€€€€~€~€€€€€€€€€€~€€€€€€€€€€~€€€€€€€€~€€€€€~€€€€€~€~~€~€€€€€~€€~€€€‚}ƒ}€~€~€€€€€€€€~€z€…{€~‚}‚}€}€€€~€€€~~€€~€€€€~€€€~€€€€~€€~}€€€~€~€€€€€€€€~€€€€~€~€€€€€~€€€€€€€€€~€€€€€€€€€€€€€€€€€~€€€€€€€€€€€€€€€€€ƒ|€€€€€€€€€€€€€€€€~†{~‚}‚}€€€€~€€€~~~}€~€€€~€€€€€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€~€€€€€€€€€€€€€€€€€€€€~€~€€€€€€~€€€~€€€€~€}€€~€~€€~€‚}€€€€€€€€€€€€€€€€€€€€€~†|€~€~€~€€~~€~€~€‚}€~~~~€€€€€€€~€€€€€€€€€€€€~€~€~€~€~€€€€~€€€€€~€€€~€~€€€€€~€€€€€€~€€€€~€€€€€€€€€€€€€€€~€€€€€€€€€€}€€€€€€€€€†z€€€€€€€€€€€€€€€€†{~~~€€~~€~€~‚}€}~‚}€€€~€€€€~€€€€~€€€€€€€€€€€€~‚|€€€€€€€€€€~€€€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€~€~€~€~}€€€€€€„z€€€€€€€€€€€€€~€€€€†{~€~~€~€€~€~€~~~~~~€€€€€€~€~€~€€€€€€€€€€€€€€€€€€€€€~€€€€€€€€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€~€€€~€~€€~€€€€€„z~€€€€~€€€€€€€€~€€€€„|}€€~€€~~€€€~~€€~‚}~€€€€€€€€€€~€€€€€€~€~€€€~€€~~€€€€€€€€€~€€€€~€€€€€€€~€€€€€€€€€€€€€€€€€€~€~€€~€€€€€€~€€~€€€€ƒ{€€€€€€€€€€€€€€€‚}„{‚}~|€~~€€€~~€~€~€~~~€€€€€}€€€€€€€€€€€€€€~€€€€€€€€€‚}‚}yƒy{ƒ}|€{}y‚{z|‚vƒ|‚„|„{€€€€€~€€€~€€€€~€€€€€€€€€€€€€€€€€~€~€€€~€~€~€~€~€ƒ|€€€€€€€€€€~€}€~€~‚|€~|€~}~€~€}~€€€‚}€~€€€€€€€€€€€€€€€€€€€~€€€€€}}€€~€€€~~€~€~{~€||€|€{€z‚zz„v‡t‡€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€€€€~€€€€€‚|€~€€€€€~~~€€€~~‚}|€~„€€€~~€€€€~€€~€€~€~}~€€€~€€€€~€€~€€€~~€~€€~€…|€€€€€€€€€~€~€~~~}}€~~}€yx†sŠqŒ~€€~€~€€€€€€~€~€€€€€€€~~€€€€€€€€}€€€~~~€€€€~~€~}ƒ|ƒ|‚|}}}~€~€}€~‚|}~}~€€~~€€€€~‚}€€€€~€}€~€~€€€~€€~~€€~€~~€€€€€€€€€€€€~„}€‚|€€€€€€~€~~|~~}||{ƒw†uˆ€~~€€~€€~€€€€€€€€€€€€€€€€€€€€€€€~€€~€€~€€€€€€~~‚}€~~‚}€‚|ƒ|‚|‚}‚}ƒ|‚}‚}}}€~}€‚|€}‚~~€‚}€~€~€~~€~€€~€€~€€€€€€€€€~€€€~€€€€€~~€€†}~€€€€€€~€~~}€~|€€€„~v‡€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€€~€€€€€}‚}~‚}‚|ƒ|~~‚}ƒ|‚|‚}‚|‚|ƒ|~€~‚}‚}€~~€~‚}ƒ€‚}€€~‚}€€€€€€~€€€~€€€€€€€€~€€~€€€€€€€~€~€ƒ}€~~€€€€€€~}~|~{€€}~€€€|ƒ€€€~€~€€€€€€€~€€€€€€€~€€€€€€€€€€€€~€€€„|ƒ}‚}ƒ|~~‚}}~„{†z…z{„~€}~ƒ|‚}€~€|~~}€€~€~€€~~~€€€€€~€€€~€€€€~€€~€~€€€~€~€€„€~€€€€~~~}~|~|{|€|€}}€€€€€€€€€v‡rŒs¸r¹sºt½r¹s½tºuºv»s¹q¸s¸v¹wµt¶t³u²t¯m“k’rŠ~€€€€€€€€€€€€‚}„{„{ƒ|ƒ|~‡{€€ƒ|„{„}„{€~|}‚|‚}ƒ|‚}ƒ|}€€€€€€€}}€~€~~€€€€~€~€€~€~€€€€€€€€~€€~€€€€€~‚}€€€~€€~€}|~~~}~€~€~€€€w‰x‹ˆ}‚`—t«u²u­u§u¦t¨t¦oœlšp™q—t–n“onmnŒmŒmŽvr’s•roŽuˆ€€€€€€€€}Žr†y…z‚}€€€~~€€€€€€†{}€}€~‚}~ƒ|€}€~~ƒ}€€~€~€~~‚}€~}€‚}€€€€€€~€€€€~~€~€€€€€€~€€~€€€€€€€€€~~~~~}~~}}€~€z€€€s«a¤b—~wz€c—v§s£oŒn‡pˆt„t„t‡nŒnŠru’pmŽoz€z€qŠh‘grªh’w‚}zi€€€~€€€}©]‡{„{ƒ|„{ƒ|€€€€}€€‡{w~~~~€~‚|‚|}€€€€€‚|€€~~€~€~~}~€~€€€€~€~€~€€€€€~€€€€~€€€~€~€~€ƒ{€~€~‚€€€€€~€~~}~}~}~|{{€|}€€v©pc—~{zƒe•t§v¥sŽjh’}}}x†lkx£t¤qŒll~|~{qŒkj‘t«h‘s‰|zd‘~€€€€€€€~~€Šƒu‰zƒ€}‚}€~~‚}„|„|€€€€x}‚}ƒ|‚|}€€~~€}}€}€~}~~€€~~€~€~€€~€€~€€€~~€€}€€~€€€~€~~€€~€€€€~~€~~}~|~}~{|{€z{€€€€€yŠnŽg”€z†e–‚‚~ƒ„pŒl€€|„{ƒj‘xŠ~€~ƒm}}€€€€mŽtž{‚n‹|{h€~€€€€€€~€€€€€‚}‚~‚~„{ƒ|€€€€€€€€€€~€€}‚}€~‚}~~~€€€€~€~€~}€€€€€€~€~€€~€~€€€€€€€~€~€€€€~ƒ}€€~~…{}~|}|~}~}|~~€€~{~z{‚€€{„€€~{ƒ€}ƒ~}z„~~~‚~~}ƒ~~€~}€~z~~{ƒ~|€€~€€€€€€~€€€€€€€€€€€€€~€€€€€€~€€€€€~€€~€€~€€}‚|€€~~€€€~€~~~‚}~€€€€~€€€~€~‚}€€€~€€€€€€€€€€}€~€}€}~‚~}|}€}€€€|‚zƒ}ƒy†‚ƒ{—€„~‚|ƒ{‚y„~ƒ|ƒ}ƒ~ƒ}•{‚}‚}‚~‚x‚x‚~ƒ|…~„t†}ƒ{…|‚yƒ}…€€€€~€€€€„{†{„|ˆ|ƒ}€€€€€}|ƒ€€€€€€€€~€€€€€€€€~€‚}~€€~~€€~‚~€~~}~~€}~~~€€~~~€~€€~€€~€€€~€ƒ~~€}€}~€|}~|€„}|}~€€€}‰z‘|—|–|™šu‡s†q…pŽg•h’i“g“h•x†h”f“i“h’i’g“q‡p†q†t•n£u¬q“t«x¨€€€€€~~€|€~~‚w‚xƒv…s‘r€€€€€€mšs‹nr‹w†rŠ‡~€~€€€~€€€~€€~€~‚}€}€~€€‚}€}‚~‚}€~~~€}}€€€~€€~€~€€~€€~€€~~€|~|~~~}{~}~~€€|‚}€€€z…}•z–|—{™{˜s‡t‡u†tˆg“i’f”j“f”x†g”i•g”i“e”lo„q†n‡m‰j p«r”pªqŸ€€€|€€uƒM\‡v}~ƒuƒu„uˆqŽu€€€€~€y…’w“v“t”t€~‚}€€€€€€‚}}~~~€€~~€~~~~€~}~~€~€~~~~~}€}~€}€€~€€~€€€€~~~€€~}}~|€}€€€€v‡{’|•~•|—~”uˆs†r‡r†l‘i’i”j’i•z„g”f”i“g“k‘q†q‡nˆp†hˆn¦n¤t•s¨b”€~€€~€Sf…v‚Q‹k‰}„u„u†r‰ov€~€r˜t“wŽuŽsš…€€€~~€€~}€“x€~~€€€~}€~€~~}ƒ{~€~~€€€€~}}€‚}}}€~~€}~~}‚}~€~€}}ƒ~€€€€€€€€€€€€€|}~~~€~~€€€€€€€v…}“|”|•~˜sŒt‡sˆr‡r…s‡m”kšsk”y…h”f”i’i“lŽr†o†n‡n‡g‡s§q§r–pªg‰{{x…r…Jj‡v„t…NŽt‚~…s†q‡qŠo€~~€~wœv£t£y—w§{{„€€€€€~}’w“x€€€€€~~~~€‚}„z„|‚}~€€€}‚}€~€~}}}|}}}}€|}}€~}}€}€~}€€€€€~€€€~€€}~~€}€}~€€€w‡|{‘y“y”pˆr‡s†r‡q‡r‡q›t¥ržs“z„i”g”g“i“p†o‡q‡oˆnˆhˆyzxƒs™o£cˆuƒt†:’Hu…x‚t„x†Wt–t—t“t•r‘qz„|~†{y“|Šx‹y~€|ƒ€~~ƒ~‚~ˆz‹x~€€€}ƒ|‚}~‚~}~ƒ|‚}„{|ƒ|‚}€€~€ƒ}~}|~~|€}€}€~€{€z€{€{}|~~€~‚~€€€~~€€€~€~~~~€}~~~€~|‚{ƒ}€€€{…zˆ{|’’p‡sˆq…t†r†rq‘rŒtŸv¥y…i”h•g•o†p‡p†o†n†o‡u„r‚{}t™k¡d‰L1”@’?’J‘JŒYD|u—wšt—|ˆz„xšw‡~€€€†z‘xsvŽt‚~|ƒ~€€~~€€~€~€€€€~‚|~}€~€€}„|ƒ|„{„{€€~}}~}‚|‚{}~}€|€|~|{|€zz~|}{~|}|}}€„}€€€~€€€~}€~}~~~€~~~}|‚||‚|€€€u‡{ƒwŒz€v‘wu‡q…sˆr‡r†q†q…s‘v¨x~y~nŽl”r•sp‡q‡m‡lˆeˆeˆz}utˆf†u„hˆ}i‡r†hŠZŒ{ƒ€…u—x“{…w‹t˜u–f”}€‰{x‹y‹v’w€~}‚~€€~~~€€~€~€€€~~‚}~‚|„|‚~y}|„z…z‚|~~~~€|€}€}€{|~{}z|{}x}z}y~yy~z}|zy~y~|€~€€€~€€€~€}€~~€{|}|}~||‚|‚}|‚€€~w…zŒxz‹v‰ytˆu„s†r†t…q…qŠu¦v¦t¢ržu§r—pˆt¡n•pˆr‡mˆf‡k†y|x|o†j„m…o„nˆr…q‡c‰c‡|ƒy‘{„u”y‘t—s˜v™a˜|~€Š|yŒwpw~~€€~€~‚~ƒ}€€€€€}€€€~}€~}…{…|z~„z†z‡y†{€€}‚{€}|{€{{}y~{}y|y|yx|wyw|xzxzx|xxx{y€~€~}€€€~~€~|~}}€|~}~~~€|}~€{ƒ}€€€€x…{‰}‘z‘{Œpˆs‰t‡s†r†t‡s†v™u¨sŸvŽm›v¦x¤nŠp‡q‡o‡n‡nˆ`Šv|j¬l˜v\‹s…f‰qˆ{ƒyƒ}€€€|ƒx…Z”OŽOŽV]‰`ˆ`ˆ]Š‰wzŽx‡x‘w€~€€€€~€€€€~€€~€€}~}‚}‚}„z‹y€~~ŠwŒwŠx€€~‚}‚}‚}€}|{{~|~|}yy|y{z}||z~|}{}}}{}|€€~€~€~~€€€~~€~~€~€~~~€{z‚~€}‚}}‚}€€~ƒ}t…z„}’~’~“pŽt‡r†s‡r†t†s–pŸi“j–{ƒh”g•h–r¥mŠq†n‡nˆj‡e‰d‹d°m—d¢\Œ€€€~€€€b’H–F˜C–G–TZ†d„b†`ˆ\‹Y‹YŒ^ŒŠxˆw“t€€€€€€~€€€€€~€~‚~€€~Žyzˆ{{€~‚}~~€~€‚}„{ƒ|}}€zy€x~x}yy{x{x|v~x~z|~{~z€}‚~}~€€~~€~€€|}€y~|}}€€~€€x„|Œ||“~•r‡r‡q†t†r…qˆqˆg“i“i”z„h”e”g•lŒoŠo‡n‡kˆmˆdŠaŠk±iœk¬`‰€€€€€T“P’Q”P’I”JQŒXŠYŠXTŽTŽTWŽWV‹YŒ‘tŽr~€t‡s‡t…~€~€x†v‰uˆzƒy„€~€}|~€|~€~€€ƒ~€~€€~€€~€€€~€€‚}}‚}ƒ|‚}‚}}~€€€}}€~}€€}€€~}€~~€~~~}~}}‚€€€€€y…}€}’v†u‡q†r†r†qˆs‰h”k“j’y…g“h”h”i”p‡qˆm‡m‰k‰bŠqœi®išj¯]Š€€€€u„U`]WŽO“INO‘Q‘L’POP‘USTŽVŽYŒYŒfŠx†|‚vˆv‡y†kkii‘h’irŠ~~{y€z‚}€€€€€€€€€€€~‚}~~‚}…€€~~€‚}€€€‚}€€~€€€€~€€~€€~~€€€~€}€€~€~€~€€€x†z‡|ˆ}Š|v†t†t„s‡u‡v…m’i“i“h“z„i“i•i”h“p‡oˆqˆn†m‡d‹m¢m£sŽf˜kŽ€[‘cŽ`cŒf‘=˜HMMG’K‘L“P“O’QOQŽSX[nŠ_Žus‘xŒ{~€€€€€€€€€~~~‚}ƒ|Šw†z~‚}€~~€€€~€€~|‡zŠy‹~€~~€~vuŠuŠuˆvŽw‹u‰vˆ€~€€€€€€€~€~€€~€~|}~€~€€€€€~€€uˆu‰~|w‰{‚q‹|‚|‚|‚zƒj‘|}nŽyƒy„{ƒx…i‘x…h’w…y…xƒv†a—d”mˆl‡k¡h“[‹kfŽiŽjŽU‹V‰T‡Q‹OŽROQUŽVWŒU[\[ŽX]ŽfŒƒ|•tw~~|ƒ{ƒ|‚|‚{‚€€€€€€€€€€€€€€€€|€€€~€}€~‚~€€~~~€~‚~€~€€}‚}€€€‚}€€€€€€~€~€€~{€€€€~€€€€€€€€x†xŒz„px…wžy xŸv‹{ƒnŽy„v–y¢vŸux‚mz„vŽv t¡qz„|…oŠk‹~ƒ{„iiŽlŒnt‰tˆrŠWŠR‰PŠPPŒSSW‘YTXXYŽ^Žao…€€~€€~€€€€€€€€€€€~~€‚}~€€}€~€€~€€€€~~€~€€€€€€€€„|€€€€€€€€€|~}~€€€€€w•€€€€€€€€€€€~€‚‚ƒ‚€‚}‚€‚‚‚~‚~€}ƒ‚ƒ‚‚}„y…~„|„}ƒ}ƒy‡l‰j‹j|‚z„€}t†]‰`‰]ŽX[‘[‘XZ\Ž]Ž^aŽ`Œc‰~€€€€~€€~€€€€€€€€€€€€€€€~€€~€~€~€€€~€€€€~€€}€€‡€€€€€€€€€~€€~€€€~}|ƒ€€€€€ƒ~ƒ~‚}‚|ƒ}ƒ{‚‚|‚}|‚}}‚{„{‚‚‚|„~ƒ|ƒ{ƒ}„|ƒ{|zƒzƒ|‚€|ƒsˆb‰`Œ`Ž`]Ž^^_`Z`]a‹h†€}}‚€€€}€€~~€€~|‚€€€~€~€~€€€~€||‚~‚|‚|ƒ|‚|‚{‚zƒ}}~€€~€€€€€€€~~~~~€€€€€€€€€€€€}€~~ƒ~‚€‚~}ƒ€€~€~€€~|ƒ}‚}|„‚~ƒ}‚}wƒw…x…x†x…sˆiŒdŒ`ŠbŽabbcŽgŽcŒc‹addŠhŠ€~€}€~€€~€€€}€€~€~~~€~~y‚zƒz‚{‚€€€€~€€€€€€€€€~€~€~€€~{„~~|‚~€~€€~~€€€€€€€€€€€€€€€}‚€€€‚~~~~€~‚}ƒ}„|‚|‚|‚€{‚|‚|‚zƒx„z„x„x…y…x…x…hŽilŒf‹hfŒhŠiŒe‹e‰lˆ~€€|~~€€|~€~€~€€€€~€€€€}€{}|ƒ|ƒ~~€€€€€€€€€€€€€€€€€}‚€€€€€~}|‚~}}}‚{‚|ƒzƒ{{z{‚{‚{‚zƒ{ƒ||‚}}‚}|‚}‚{ƒ|‚{ƒz„{ƒzƒw†y…z„y…z„w…y…z…x†y…y…y…y…y…z…z„w†{„x…y…x…x†y…z„{ƒv…w…w…v†v…u…t‡vˆt‰tˆw‡w‡uˆq‹o‰n‰mˆo‰o…wƒ|~~€~€}€€€~€|}~~€€€€€{€z{‚~€€€€€€€€€€€€€€€€~€€~€€€~€€€}€€~}~€}‚|ƒ~~|‚~€}{‚~~€|~€~|}|‚~|‚|‚~€~|{ƒ|ƒz„|ƒy„{ƒz„{„z„{„{ƒ{ƒ|ƒx…z„{ƒz„{ƒ{ƒ|ƒy„x…z„{ƒz„y…y…{ƒx…{ƒz„y„y„x…x…w†v‡v‡u‰t‰r‹t‰y„z„{ƒyƒzƒw…s…v„u…u„y„}|}}€|€€~€€€~€~€€~€€}~~€~~€€€€€€€€~€€€€€€~€€€€€~~€€~€€~€~€~€}‚€|€}€~€}~€|‚{|€~|€}~~€|}‚{‚|‚||‚~~{‚}}‚{ƒ{ƒz„zƒz„{„z„z„z„{„{„z„y…{ƒy…z„|ƒy„z„zƒ{ƒzƒzƒz„y…{„z„y…y„y„z„y‚zƒzƒv„y„w†v†tˆv†s‡v‡u…y„x…u„t…tƒt„u„t…uƒ{‚€}~€}€}}€~€€€€~€€{~}~€€~€€€€€€€~‚€€€~€€~€€€~~€€€~€€€€~€~€}€}€}€|~~€}}}}}‚}€|‚}~€||€~|||‚|€{‚z{‚z„|‚{„|‚{ƒz„{ƒ|‚z„zƒ{ƒ{ƒ{ƒz„{ƒz„y„xƒz„z„zƒ|ƒy…z„yƒzƒz„y…{ƒzƒz„{ƒz‚|z‚x„yƒx„x…x„w„x†zƒv†z„wƒw„v„v„u„t…xƒyƒ}‚~~€~€€€€~€~€€~€€€~}€|}€€€€€€€€€€€~~€€~€€€€€€€~€~€~~€€~€€€€}~€~€}€}€~€}}}}{‚}€|||‚|‚|‚}zƒ}€}‚|‚|€|ƒ||‚|‚z„{„{ƒ{ƒ|ƒ{ƒz„{ƒ{„zƒz…z„z„{ƒ{„z„y„{ƒz„y„zƒz„z‚x„z„z…z„z„}z„{ƒ{‚z‚zƒyƒy„v„t„xƒx„wƒw„v„w„w„v„u„v„v„xƒ|‚~€~€€~~€}~€€€€€€€€€€zƒ}~~~€€€€~€€€€~€€€€~€~€~€€€€€€~€€}~~€}}€€~~€~}{‚€|€}}{‚}|€}‚||~€}{ƒ{ƒ|}|ƒ{„|‚z…{ƒz„|‚zƒz„{ƒz„y„z„y…|ƒx…z„|ƒz„z„y…yƒzƒz‚{ƒw„y…yƒz„z„x„zƒ{‚{{‚}}y„w‚xƒu‚x„x„w„w…x…x…w„w„xƒx„zƒzƒ|‚~~€~€~€€~€€€€€~€~€€€€|‚~€€~€€€~€€€€€€~€~€€€€€€€€€~€}~~~€~~€~~~€~€~}€}}}‚{|‚|{{}‚{‚z‚{|‚}‚{‚~|‚|‚{‚|ƒ|ƒ|ƒ{„z„y…y„zƒ{ƒzƒy„z„z„z„{„zƒz„zƒzƒy„|‚zƒ{ƒxƒ{ƒz„{„x†y„zƒ|‚|‚|‚|€}{y‚yƒyƒw„w‚w„xƒu„zƒx…x„w„z„yƒyƒ{|}~€}€€€€~~€€€€€~~€€}€{‚€€}€€€€€€€€€€€€~€~€€€€~€€€€~€~€~}~€~}‚~}~}|~€}€}}€~€{‚}|ƒ{}}|€}|‚}}|‚|‚{‚{‚{ƒ{„{ƒz„{„z„yƒyƒ}‚{ƒy„x„y…y„{ƒ{ƒy„{ƒ|ƒy„{ƒzƒzƒy„{ƒz…z„x…z…zƒ||{‚||}€|‚|‚y‚y„v„wƒx„wƒw„xƒv„zƒ{ƒx„y‚|‚}~€}}€~€~€€€€€€€~€}€€€€~€€z„~€‚~€€€€€€€€€€}€€€€~€€€€~~€~€~€}~|‚~€}}|‚}~€|}~€~€|‚}}|}~{}}{{ƒ{‚|‚zƒ|‚z„{ƒ{ƒzƒ{ƒz„|ƒx…zƒ|ƒ{ƒ{ƒ|‚z„{„{ƒ{ƒzƒzƒ{ƒzƒz„y„zƒz„z„{ƒ{‚}~€{€~}{‚|‚{‚y‚z„z‚x‚y‚yƒy„yƒ{ƒz‚{{}~€}€~€~~€}~€~~€€~€€€€€€€€€~}€€€€~€€€~€~€€€}~~€~€€~€}~€~€}‚~€~€}€€~€~}|~}€~|‚|€|}}~€}}‚}€}}}€{{|‚}‚|‚{ƒ|‚{‚{„|ƒ{‚|ƒz„|ƒzƒ{ƒz„|ƒ{„y„|‚z„{ƒ{ƒ{‚y‚{ƒ{‚zƒ{„zƒ{ƒ||‚|||{‚}‚}{‚zƒyƒyƒz‚zƒz‚wƒy‚y‚z‚{}|}~€€€€~€~€€€€€~€€€€€€€€€€~{‚}~€€€€€€€€€€~~€}€~€~€}~~€~€~~€}€~€}}}‚}}|||‚}}}}€}€~€|}|}|‚z}|‚|‚|‚|{ƒ|ƒ{‚|‚zƒ{‚|‚{ƒ{„|ƒ{ƒ|ƒy…z„z„{ƒ|‚{ƒ|‚zƒ|‚z‚{ƒz„{„|ƒ{‚}}}‚~€|€}€~€|zyƒy‚zƒ{‚{‚{‚z‚||y‚|‚~}|‚~€}~€€€€€€€€€€€~€€€€€€€~€€€€€~€€€€~€€€€€€€}€|~€}€€~~€}}‚}~€~}~€{€}~€}‚{‚}~~€€}||‚|‚}~€||ƒ|‚|‚|‚|‚|ƒ{‚|‚{ƒ|ƒ|‚{ƒz„{‚|‚{‚{ƒ|ƒzƒz‚yƒ{|‚}{‚z‚{‚}|‚}}‚|‚~}}~€~}||‚x{‚{‚|‚y|‚}‚|‚{‚~€~{€€€€~€~€}€~€€€€€€~€€€€€€€~€€€€€€€€€€€€€€€~€~€€~~€}~€€}~€~€~€~€~€~€}‚|€}‚}~€€|}€~€|‚~|€}}}|‚~{ƒ}|ƒ|ƒ{ƒ{ƒ{ƒz‚{ƒ{ƒzƒ|‚z‚}|ƒ{‚|‚|ƒz„|ƒ{„}‚{‚zƒ}‚z‚}}‚}‚z„}}‚}~}}~€}}€|{}‚{|‚z|||‚||{‚}~€}~€€€€€€€~€~€€€~€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€€€}€~~€~}}€~€~€}~€}|€}€~€}~€~}}€}€}€}}‚}}|‚{ƒ|ƒ{‚|‚|‚}‚zƒ}{‚}||ƒ}‚}‚{‚{ƒ|‚z‚}{‚|‚|‚|‚}‚|‚}€}~€}~€~~€|}€~€~||{|‚~}}}~€~~€}€}€€~€€}€~€~€€€~€~€€€~€€€€€€€€€€€€€€€€€€~€€€€€€€€€~€~€€~€€~~€€~€|}€€|}€||}{}}|‚~€}}€~€}}€}‚|‚|‚{ƒ{ƒ{ƒ||}‚}‚~|ƒ}‚|‚|ƒ{‚|‚{ƒ}‚}‚|}|‚}{‚}~}|‚|‚~€}€~~}~€|~€|{‚|}{}}}~€}}€~€€~€€~€€€€€€~€~€~€€€€€€€€€€€~€€€€€€€€€€€€~€~€€}€~€~€€€~~€}~€~}~~~}€~€}‚||‚}{‚|‚~€}}‚|~}~€||‚}{‚{‚|‚}‚}}|‚{‚}‚|ƒ|‚}|‚}‚|‚}‚|‚{‚}‚|‚}|}‚|‚|}|~€}€~€~€~~€}}}|}||}}€|~€}‚€€€€~€~€~€~€€€€€€€€€€€€€€€€€€€€€€€~€~€~€€~€~€~€€~€€~€€€}‚}‚}‚€}€}~~€}€~€|ƒ~~€~€}}‚}|‚|‚}€|‚|‚||‚|‚{ƒ|‚|ƒ|‚|‚{‚}}|ƒ|‚{‚|{‚||~|‚|‚|‚{‚€~~€~€~}€}€}€~€|~€|}}}€~€}~~€|€€~€€€~€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€€~€€€€~€~€~€~€€~~€€€€~€€~€}~~~€~€}€~€~}}€}~|‚}{}€zƒ}‚}‚}~€|‚|}‚|ƒ}€}€|‚{‚||‚}}}|~€€€~~€~€~€}€|‚~€~€€}€~~€~€€}€€€€}€€€€€€€~€€€€€€€€€€€€€€€€€€€€€€€€€€~€€€€€€€€€€~€€~€~€€€€~~~€}€€~€~~€|€€~€}}~€~}}|‚}~€}‚|‚}}‚|‚|zƒ}~€}‚~€}‚|}€}|}€}|~€}~}~~€€~€~€~€€€}}€~€~€}€€~€}€~€€~}€}€€€€€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~~€€€€~€€€€}~€~|~€€~€~€~~~~~€|}‚}~€~€~€~€}}‚~€~}‚{ƒ~€€~~€|‚~~~~}}}‚~|||~‚€}}~}|‚~€~~~€~€~€~€}€€~€~€~€~€~€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€~€€€€~€€€~€€€~€€€€€€€~€€€~€}€~€}€~€€~€~€~€~~}€~~€}€}‚~}€}|}€}}‚~€}~€~€|{}}~€~€~€~}}|‚€}|‚}€}€~~€~€~€€€~€€~€~€~€€}€€}€~€€€€€€€€€€€€€€€€€€€€€~€€€€€€€€€€€€€€€~€€€€€€€€€~€}~€€~€}€~~~~€€~€€~€~€~}~€~€~€~€}~€~€|‚~|‚~€}}}~~€}~€~}}~€~€|}}€}€~€~€€~~€~~€~€€€€|€€€€€€€~€€€€€€€€€€€~€€€€€€€€€€€€€€€€€
+\ No newline at end of file
+diff --git a/examples/libva_buffer_sharing/libva_buffer_sharing.cpp b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
+new file mode 100644
+index 0000000..04fe359
+--- /dev/null
++++ b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
+@@ -0,0 +1,443 @@
++/*
++ * Copyright (c) 2012 Intel Corporation. All Rights Reserved.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sub license, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
++ * IN NO EVENT SHALL PRECISION INSIGHT AND/OR ITS SUPPLIERS BE LIABLE FOR
++ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
++ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
++ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <stdint.h>
++#include <errno.h>
++
++#include <unistd.h>
++#include <sys/types.h>
++#include <sys/stat.h>
++#include <fcntl.h>
++#include <va/va.h>
++#include "va_display.h"
++
++#include <va/va_drmcommon.h>
++#include "utest_helper.hpp"
++
++#include <getopt.h>             /* getopt_long() */
++
++typedef cl_mem (OCLCREATEIMAGEFROMLIBVAINTEL)(cl_context, const cl_libva_image *, cl_int *);
++OCLCREATEIMAGEFROMLIBVAINTEL *oclCreateImageFromLibvaIntel = NULL;
++
++char *input_nv12;
++char *output_nv12;
++int frame_size;
++int picture_width, picture_height;
++unsigned char *newImageBuffer;
++VADisplay	va_dpy;
++cl_int cl_status;
++VAStatus va_status;
++
++static const char short_options[] = "i:r:o:h";
++
++static const struct option
++long_options[] = {
++  { "input", required_argument, NULL, 'i' },
++  { "help",   no_argument,       NULL, 'h' },
++  { "resolution", required_argument,       NULL, 'r' },
++  { "output",  required_argument, NULL, 'o' },
++  { 0, 0, 0, 0 }
++};
++
++#define OUTPUT_NV12_DEFAULT "./out.nv12"
++#define WIDTH_DEFAULT 256
++#define HEIGHT_DEFAULT 128
++
++#define CHECK_VASTATUS(va_status,func)                                  \
++  if (va_status != VA_STATUS_SUCCESS) {                                   \
++    fprintf(stderr, "status = %d, %s:%s (%d) failed,exit\n",va_status, __func__, func, __LINE__); \
++    exit(1);                                                            \
++  }
++
++#define CHECK_CLSTATUS(status,func)                                  \
++  if (status != CL_SUCCESS) {                                   \
++    fprintf(stderr, "status = %d, %s:%s (%d) failed,exit\n", status, __func__, func, __LINE__); \
++    exit(1);                                                            \
++  }
++
++static void usage(FILE *fp, int argc, char **argv)
++{
++  fprintf(fp,
++      "\n"
++      "This example aims to demostrate the usage of gpu buffer sharing between libva and Beignet.\n"
++      "The input and output file are nv12 format.\n"
++      "Please use the following command to see the result:\n"
++      "gst-launch-1.0 filesrc location=file_name ! videoparse format=nv12 width=xxx height=xxx ! imagefreeze ! videoconvert ! video/x-raw, format=BGRx ! ximagesink\n"
++      "(Please install gstreamer1.0-plugins-base, gstreamer1.0-plugins-bad, \n"
++      " gstreamer1.0-x by apt on Ubuntu, in order to use gst-launch-1.0)\n"
++      "For more details, please read docs/howto/libva-buffer-sharing-howto.mdwn.\n"
++      "\nUsage: %s [options]\n\n"
++      "Options:\n"
++      "-i | --input=<file_name>           Specify input nv12 file name like /home/xxx/in.nv12\n"
++      "-h | --help                        Print this message\n"
++      "-r | --resolution=<width,height>   Set input resolution\n"
++      "-o | --output=<file_name>          Specify input nv12 file name like /home/xxx/out.nv12\n"
++      "",
++      argv[0]);
++}
++
++static void analyse_args(int argc, char *argv[])
++{
++  input_nv12 = NULL;
++  picture_width = 0;
++  picture_height = 0;
++  output_nv12 = NULL;
++
++  int c, idx;
++  for (;;) {
++
++    c = getopt_long(argc, argv,
++        short_options, long_options, &idx);
++
++    if (-1 == c)
++      break;
++
++    switch (c) {
++      case 0: /* getopt_long() flag */
++        break;
++
++      case 'i':
++        input_nv12 = optarg;
++        break;
++
++      case '?':
++      case 'h':
++        usage(stdout, argc, argv);
++        exit(0);
++
++      case 'r':
++        sscanf(optarg, "%d,%d", &picture_width, &picture_height);
++        break;
++
++      case 'o':
++        output_nv12 = optarg;
++        break;
++
++      default:
++        usage(stderr, argc, argv);
++        exit(1);
++    }
++  }
++
++  if(!input_nv12){
++    input_nv12 = INPUT_NV12_DEFAULT;
++  }
++  if(!output_nv12){
++    output_nv12 = OUTPUT_NV12_DEFAULT;
++  }
++  if(picture_width == 0 && picture_height == 0){
++    picture_width = WIDTH_DEFAULT;
++    picture_height = HEIGHT_DEFAULT;
++  }
++  return;
++}
++
++
++static void initialize_va_ocl(){
++  int major_ver, minor_ver;
++
++  printf("\n***********************libva info: ***********************\n");
++  fflush(stdout);
++  va_dpy = va_open_display();
++  va_status = vaInitialize(va_dpy, &major_ver, &minor_ver);
++  CHECK_VASTATUS(va_status, "vaInitialize");
++
++  //ocl initialization: basic & create kernel & get extension
++  printf("\n***********************OpenCL info: ***********************\n");
++  if ((cl_status = cl_test_init("runtime_gray_effect.cl", "runtime_gray_effect", SOURCE)) != 0){
++    fprintf(stderr, "cl_test_init error\n");
++    exit(1);
++  }
++
++  oclCreateImageFromLibvaIntel = (OCLCREATEIMAGEFROMLIBVAINTEL *)clGetExtensionFunctionAddress("clCreateImageFromLibvaIntel");
++  if(!oclCreateImageFromLibvaIntel){
++    fprintf(stderr, "Failed to get extension clCreateImageFromLibvaIntel\n");
++    exit(1);
++  }
++}
++
++static void upload_nv12_to_surface(FILE *nv12_fp, VASurfaceID surface_id)
++{
++  VAImage surface_image;
++  void *surface_p = NULL;
++  unsigned char *y_src, *u_src, *v_src;
++  unsigned char *y_dst, *u_dst;
++  int y_size = picture_width * picture_height;
++  int u_size = (picture_width >> 1) * (picture_height >> 1);
++  int row, col;
++  size_t n_items;
++
++  n_items = fread(newImageBuffer, frame_size, 1, nv12_fp);
++
++  va_status = vaDeriveImage(va_dpy, surface_id, &surface_image);
++  CHECK_VASTATUS(va_status,"vaDeriveImage");
++
++  vaMapBuffer(va_dpy, surface_image.buf, &surface_p);
++  assert(VA_STATUS_SUCCESS == va_status);
++
++  y_src = newImageBuffer;
++  u_src = newImageBuffer + y_size; /* UV offset for NV12 */
++  v_src = newImageBuffer + y_size + u_size;
++
++  y_dst = (unsigned char *)surface_p + surface_image.offsets[0];
++  u_dst = (unsigned char *)surface_p + surface_image.offsets[1]; /* U offset for NV12 */
++
++  /* Y plane */
++  for (row = 0; row < surface_image.height; row++) {
++    memcpy(y_dst, y_src, surface_image.width);
++    y_dst += surface_image.pitches[0];
++    y_src += picture_width;
++  }
++
++  if (surface_image.format.fourcc == VA_FOURCC_NV12) { /* UV plane */
++    for (row = 0; row < surface_image.height / 2; row++) {
++      for (col = 0; col < surface_image.width / 2; col++) {
++        u_dst[col * 2] = u_src[col];
++        u_dst[col * 2 + 1] = v_src[col];
++      }
++      u_dst += surface_image.pitches[1];
++      u_src += (picture_width / 2);
++      v_src += (picture_width / 2);
++    }
++  } 
++
++  vaUnmapBuffer(va_dpy, surface_image.buf);
++  vaDestroyImage(va_dpy, surface_image.image_id);
++}
++
++static void create_y_image_object_from_libva(VAImage *surface_image,
++                                             VABufferInfo *buf_info,
++                                             cl_mem *yio_p)
++{
++  cl_libva_image info_image;
++  info_image.bo_name = buf_info->handle;
++  info_image.offset = surface_image->offsets[0];
++  info_image.width = surface_image->width;
++  info_image.height = surface_image->height;
++  info_image.fmt.image_channel_order = CL_R;
++  info_image.fmt.image_channel_data_type = CL_UNSIGNED_INT8;
++  info_image.row_pitch = surface_image->pitches[0];
++  *yio_p = oclCreateImageFromLibvaIntel(ctx, &info_image, &cl_status);
++  CHECK_CLSTATUS(cl_status, "oclCreateImageFromLibvaIntel");
++  printf("\nSuccessfully create ocl image object from y plane of VASurface...\n");
++}
++
++static void create_uv_image_object_from_libva(VAImage *surface_image,
++                                              VABufferInfo *buf_info,
++                                              cl_mem *yio_p)
++{
++  cl_libva_image info_image;
++  info_image.bo_name = buf_info->handle;
++  info_image.offset = surface_image->offsets[1];
++  info_image.width = surface_image->width / 2;
++  info_image.height = surface_image->height / 2;
++  info_image.fmt.image_channel_order = CL_R;
++  info_image.fmt.image_channel_data_type = CL_UNSIGNED_INT16;
++  info_image.row_pitch = surface_image->pitches[1];
++  *yio_p = oclCreateImageFromLibvaIntel(ctx, &info_image, &cl_status);
++  CHECK_CLSTATUS(cl_status, "oclCreateImageFromLibvaIntel");
++  printf("\nSuccessfully create ocl image object from uv plane of VASurface...\n");
++}
++
++static void store_surface_to_nv12(VASurfaceID surface_id, FILE *nv12_fp)
++{
++  VAImage surface_image;
++  void *surface_p = NULL;
++  unsigned char *y_src, *u_src;
++  unsigned char *y_dst, *u_dst, *v_dst;
++  int y_size = picture_width * picture_height;
++  int u_size = (picture_width >> 1) * (picture_height >> 1);
++  int row, col;
++
++  va_status = vaDeriveImage(va_dpy, surface_id, &surface_image);
++  CHECK_VASTATUS(va_status,"vaDeriveImage");
++
++  va_status = vaMapBuffer(va_dpy, surface_image.buf, &surface_p);
++  CHECK_VASTATUS(va_status,"vaMapBuffer");
++
++  y_src = (unsigned char *)surface_p + surface_image.offsets[0];
++  u_src = (unsigned char *)surface_p + surface_image.offsets[1]; /* U offset for NV12 */
++
++  y_dst = newImageBuffer;
++  u_dst = newImageBuffer + y_size; /* UV offset for NV12 */
++  v_dst = newImageBuffer + y_size + u_size;
++
++  /* Y plane */
++  for (row = 0; row < surface_image.height; row++) {
++    memcpy(y_dst, y_src, surface_image.width);
++    y_src += surface_image.pitches[0];
++    y_dst += picture_width;
++  }
++
++  if (surface_image.format.fourcc == VA_FOURCC_NV12) { /* UV plane */
++    for (row = 0; row < surface_image.height / 2; row++) {
++      for (col = 0; col < surface_image.width / 2; col++) {
++        u_dst[col] = u_src[col * 2];
++        v_dst[col] = u_src[col * 2 + 1];
++      }
++      u_src += surface_image.pitches[1];
++      u_dst += (picture_width / 2);
++      v_dst += (picture_width / 2);
++    }
++  } 
++
++  fwrite(newImageBuffer, frame_size, 1, nv12_fp);
++
++  vaUnmapBuffer(va_dpy, surface_image.buf);
++  vaDestroyImage(va_dpy, surface_image.image_id);
++}
++
++static void load_process_store_nv12()
++{
++  frame_size = picture_width * picture_height +  ((picture_width * picture_height) >> 1) ;
++  newImageBuffer = (unsigned char *)malloc(frame_size);
++
++  VASurfaceID src_surface_id;
++  VASurfaceAttrib forcc;
++  forcc.type =VASurfaceAttribPixelFormat;
++  forcc.flags=VA_SURFACE_ATTRIB_SETTABLE;
++  forcc.value.type=VAGenericValueTypeInteger;
++  forcc.value.value.i = VA_FOURCC_NV12;
++  va_status = vaCreateSurfaces(va_dpy, VA_RT_FORMAT_YUV420,
++                               picture_width, picture_height,
++                               &src_surface_id, 1, &forcc, 1);
++  CHECK_VASTATUS(va_status, "vaCreateSurfaces");
++
++  //load
++  FILE *in_nv12_fp;
++  in_nv12_fp = fopen(input_nv12, "rb");
++  if (in_nv12_fp == NULL){
++    fprintf(stderr, "Can't open input nv12 file\n");
++    exit(1);
++  }
++  fseek(in_nv12_fp, 0l, SEEK_END);
++  off_t file_size = ftell(in_nv12_fp);
++
++  if ((file_size < frame_size) || (file_size % frame_size) ) {
++    fclose(in_nv12_fp);
++    fprintf(stderr, "The nv12 file's size is not correct\n");
++    exit(1);
++  }
++  fseek(in_nv12_fp, 0l, SEEK_SET);
++  upload_nv12_to_surface(in_nv12_fp, src_surface_id);
++  fclose(in_nv12_fp);
++  printf("\nSuccessfully load source nv12 file(\"%s\") to VASurface...\n", input_nv12);
++
++
++  //create two corresponding ocl image objects from source VASurface
++  VAImage src_surface_image;
++  va_status = vaDeriveImage(va_dpy, src_surface_id, &src_surface_image);
++  CHECK_VASTATUS(va_status,"vaDeriveImage");
++  VABufferInfo buf_info;
++  buf_info.mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM;
++  va_status = vaAcquireBufferHandle(va_dpy, src_surface_image.buf, &buf_info);
++  CHECK_VASTATUS(va_status,"vaAcquireBufferHandle");
++  cl_mem src_y, src_uv;	
++  create_y_image_object_from_libva(&src_surface_image, &buf_info, &src_y);
++  OCL_CALL (clSetKernelArg, kernel, 0, sizeof(cl_mem), &src_y);
++
++  create_uv_image_object_from_libva(&src_surface_image, &buf_info, &src_uv);
++  OCL_CALL (clSetKernelArg, kernel, 1, sizeof(cl_mem), &src_uv);
++
++
++  //create one target VASurface & create corresponding target ocl image object from it
++  VASurfaceID dst_surface_id;
++  va_status = vaCreateSurfaces(va_dpy,VA_RT_FORMAT_YUV420,
++                               picture_width,picture_height,
++                               &dst_surface_id, 1, &forcc, 1);
++  CHECK_VASTATUS(va_status, "vaCreateSurfaces");
++
++  VAImage dst_surface_image;
++  va_status = vaDeriveImage(va_dpy, dst_surface_id, &dst_surface_image);
++  CHECK_VASTATUS(va_status,"vaDeriveImage");
++  va_status = vaAcquireBufferHandle(va_dpy, dst_surface_image.buf, &buf_info);
++  CHECK_VASTATUS(va_status,"vaAcquireBufferHandle");
++  cl_mem dst_y, dst_uv;	
++  create_y_image_object_from_libva(&dst_surface_image, &buf_info, &dst_y);
++  OCL_CALL (clSetKernelArg, kernel, 2, sizeof(cl_mem), &dst_y);
++  create_uv_image_object_from_libva(&dst_surface_image, &buf_info, &dst_uv);
++  OCL_CALL (clSetKernelArg, kernel, 3, sizeof(cl_mem), &dst_uv);
++
++
++  size_t global_size[2];
++  global_size[0] = picture_width;
++  global_size[1] = picture_height;
++  OCL_CALL (clEnqueueNDRangeKernel, queue, kernel, 2, NULL,
++            global_size, NULL, 0, NULL, NULL);
++  OCL_CALL (clFinish, queue);
++  printf("\nSuccessfully use ocl to do processing...\n");
++
++  va_status = vaReleaseBufferHandle(va_dpy, src_surface_image.buf);
++  CHECK_VASTATUS(va_status,"vaReleaseBufferHandle");
++  va_status = vaReleaseBufferHandle(va_dpy, dst_surface_image.buf);
++  CHECK_VASTATUS(va_status,"vaReleaseBufferHandle");
++
++  OCL_CALL (clReleaseMemObject, src_y);
++  OCL_CALL (clReleaseMemObject, src_uv);
++  OCL_CALL (clReleaseMemObject, dst_y);
++  OCL_CALL (clReleaseMemObject, dst_uv);
++  vaDestroyImage(va_dpy, src_surface_image.image_id);
++  vaDestroyImage(va_dpy, dst_surface_image.image_id);
++  cl_kernel_destroy();
++  cl_ocl_destroy();
++
++  //store
++  FILE *out_nv12_fp;
++  out_nv12_fp = fopen(output_nv12,"wb");
++  if ( out_nv12_fp == NULL){
++    fprintf(stderr, "Can't open output nv12 file\n");
++    exit(1);
++  }
++  store_surface_to_nv12(dst_surface_id, out_nv12_fp);
++  fclose(out_nv12_fp);
++  printf("\nSuccessfully store VASurface to dst nv12 file(\"%s\")...\n", output_nv12);
++
++  //release resources
++  vaDestroySurfaces(va_dpy,&src_surface_id,1);
++  vaDestroySurfaces(va_dpy,&dst_surface_id,1);
++
++  vaTerminate(va_dpy);
++  va_close_display(va_dpy);
++}
++
++
++int main(int argc, char *argv[])
++{
++  analyse_args(argc, argv);
++
++  initialize_va_ocl();
++
++  load_process_store_nv12();
++
++  printf("\nExample run successfully!\n");
++  printf("\nNote: The input and output file are nv12 format.\n");
++  printf("Please use the following command to see the result:\n");
++  printf("gst-launch-1.0 filesrc location=%s ! videoparse format=nv12 width=%d height=%d ! imagefreeze ! videoconvert ! video/x-raw, format=BGRx ! ximagesink\n", output_nv12, picture_width, picture_height);
++  printf("(Please install gstreamer1.0-plugins-base, gstreamer1.0-plugins-bad,\ngstreamer1.0-x by apt on Ubuntu, in order to use gst-launch-1.0)\n");
++
++  return 0;
++}
+diff --git a/examples/libva_buffer_sharing/sysdeps.h b/examples/libva_buffer_sharing/sysdeps.h
+new file mode 100644
+index 0000000..4de764d
+--- /dev/null
++++ b/examples/libva_buffer_sharing/sysdeps.h
+@@ -0,0 +1,79 @@
++/*
++ * Copyright (c) 2007-2009 Intel Corporation. All Rights Reserved.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sub license, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ * 
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ * 
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
++ * IN NO EVENT SHALL INTEL AND/OR ITS SUPPLIERS BE LIABLE FOR
++ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
++ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
++ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++
++#ifndef SYSDEPS_H
++#define SYSDEPS_H
++
++#ifdef HAVE_CONFIG_H
++# include "config.h"
++#endif
++
++#include <stdio.h>
++#include <stdlib.h>
++#include <stdbool.h>
++#include <string.h>
++#include <stdint.h>
++#include <assert.h>
++
++#ifdef ANDROID
++# define Bool  int
++# define True  1
++# define False 0
++
++/* Macros generated from configure */
++# define LIBVA_VERSION_S "1.1.0"
++
++/* Android logging utilities */
++# include <utils/Log.h>
++
++# ifdef ANDROID_ALOG
++#  define va_log_error(buffer)  do { ALOGE("%s", buffer); } while (0)
++#  define va_log_info(buffer)   do { ALOGI("%s", buffer); } while (0)
++# elif ANDROID_LOG
++#  define va_log_error(buffer)  do { LOGE("%s", buffer); } while (0)
++#  define va_log_info(buffer)   do { LOGI("%s", buffer); } while (0)
++# endif
++#endif
++
++#ifndef va_log_error
++#define va_log_error(buffer) do {                       \
++        fprintf(stderr, "libva error: %s", buffer);     \
++    } while (0)
++#endif
++
++#ifndef va_log_info
++#define va_log_info(buffer) do {                        \
++        fprintf(stderr, "libva info: %s", buffer);      \
++    } while (0)
++#endif
++
++#if defined __GNUC__ && defined HAVE_GNUC_VISIBILITY_ATTRIBUTE
++# define DLL_HIDDEN __attribute__((visibility("hidden")))
++# define DLL_EXPORT __attribute__((visibility("default")))
++#else
++# define DLL_HIDDEN
++# define DLL_EXPORT
++#endif
++
++#endif /* SYSDEPS_H */
+diff --git a/examples/libva_buffer_sharing/va_display.c b/examples/libva_buffer_sharing/va_display.c
+new file mode 100644
+index 0000000..dd58dd2
+--- /dev/null
++++ b/examples/libva_buffer_sharing/va_display.c
+@@ -0,0 +1,166 @@
++/*
++ * Copyright (c) 2012 Intel Corporation. All Rights Reserved.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sub license, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ * 
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ * 
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
++ * IN NO EVENT SHALL PRECISION INSIGHT AND/OR ITS SUPPLIERS BE LIABLE FOR
++ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
++ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
++ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++
++#include "sysdeps.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <stddef.h>
++#include <string.h>
++#include <va/va.h>
++#include "va_display.h"
++
++extern const VADisplayHooks va_display_hooks_android;
++extern const VADisplayHooks va_display_hooks_wayland;
++extern const VADisplayHooks va_display_hooks_x11;
++extern const VADisplayHooks va_display_hooks_drm;
++
++static const VADisplayHooks *g_display_hooks;
++static const VADisplayHooks *g_display_hooks_available[] = {
++#ifdef ANDROID
++    &va_display_hooks_android,
++#else
++#ifdef HAVE_VA_WAYLAND
++    &va_display_hooks_wayland,
++#endif
++#ifdef HAVE_VA_X11
++    &va_display_hooks_x11,
++#endif
++#ifdef HAVE_VA_DRM
++    &va_display_hooks_drm,
++#endif
++#endif
++    NULL
++};
++
++static const char *g_display_name;
++
++static const char *
++get_display_name(int argc, char *argv[])
++{
++    const char *display_name = NULL;
++    int i;
++
++    for (i = 1; i < argc; i++) {
++        if (strcmp(argv[i], "--display") != 0)
++            continue;
++        argv[i] = NULL;
++
++        if (++i < argc) {
++            display_name = argv[i];
++            argv[i] = NULL;
++        }
++    }
++    return display_name;
++}
++
++static void
++print_display_names(void)
++{
++    const VADisplayHooks **h;
++
++    printf("Available displays:\n");
++    for (h = g_display_hooks_available; *h != NULL; h++)
++        printf("  %s\n", (*h)->name);
++}
++
++static void
++sanitize_args(int *argc, char *argv[])
++{
++    char **out_args = argv;
++    int i, n = *argc;
++
++    for (i = 0; i < n; i++) {
++        if (argv[i])
++            *out_args++ = argv[i];
++    }
++    *out_args = NULL;
++    *argc = out_args - argv;
++}
++
++void
++va_init_display_args(int *argc, char *argv[])
++{
++    const char *display_name;
++
++    display_name = get_display_name(*argc, argv);
++    if (display_name && strcmp(display_name, "help") == 0) {
++        print_display_names();
++        exit(0);
++    }
++    g_display_name = display_name;
++
++    sanitize_args(argc, argv);
++}
++
++VADisplay
++va_open_display(void)
++{
++    VADisplay va_dpy = NULL;
++    unsigned int i;
++
++    for (i = 0; !va_dpy && g_display_hooks_available[i]; i++) {
++        g_display_hooks = g_display_hooks_available[i];
++        if (g_display_name &&
++            strcmp(g_display_name, g_display_hooks->name) != 0)
++            continue;
++        if (!g_display_hooks->open_display)
++            continue;
++        va_dpy = g_display_hooks->open_display();
++    }
++
++    if (!va_dpy)  {
++        fprintf(stderr, "error: failed to initialize display");
++        if (g_display_name)
++            fprintf(stderr, " '%s'", g_display_name);
++        fprintf(stderr, "\n");
++        abort();
++    }
++    return va_dpy;
++}
++
++void
++va_close_display(VADisplay va_dpy)
++{
++    if (!va_dpy)
++        return;
++
++    if (g_display_hooks && g_display_hooks->close_display)
++        g_display_hooks->close_display(va_dpy);
++}
++
++VAStatus
++va_put_surface(
++    VADisplay          va_dpy,
++    VASurfaceID        surface,
++    const VARectangle *src_rect,
++    const VARectangle *dst_rect
++)
++{
++    if (!va_dpy)
++        return VA_STATUS_ERROR_INVALID_DISPLAY;
++
++    if (g_display_hooks && g_display_hooks->put_surface)
++        return g_display_hooks->put_surface(va_dpy, surface, src_rect, dst_rect);
++    return VA_STATUS_ERROR_UNIMPLEMENTED;
++}
+diff --git a/examples/libva_buffer_sharing/va_display.h b/examples/libva_buffer_sharing/va_display.h
+new file mode 100644
+index 0000000..4ed33e0
+--- /dev/null
++++ b/examples/libva_buffer_sharing/va_display.h
+@@ -0,0 +1,64 @@
++/*
++ * Copyright (c) 2012 Intel Corporation. All Rights Reserved.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sub license, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ * 
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ * 
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
++ * IN NO EVENT SHALL PRECISION INSIGHT AND/OR ITS SUPPLIERS BE LIABLE FOR
++ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
++ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
++ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++
++#ifndef VA_DISPLAY_H
++#define VA_DISPLAY_H
++
++#include <va/va.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++typedef struct {
++    const char *name;
++    VADisplay (*open_display)   (void);
++    void      (*close_display)  (VADisplay va_dpy);
++    VAStatus  (*put_surface)    (VADisplay va_dpy, VASurfaceID surface,
++                                 const VARectangle *src_rect,
++                                 const VARectangle *dst_rect);
++} VADisplayHooks;
++
++void
++va_init_display_args(int *argc, char *argv[]);
++
++VADisplay
++va_open_display(void);
++
++void
++va_close_display(VADisplay va_dpy);
++
++VAStatus
++va_put_surface(
++    VADisplay          va_dpy,
++    VASurfaceID        surface,
++    const VARectangle *src_rect,
++    const VARectangle *dst_rect
++);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* VA_DISPLAY_H */
+diff --git a/examples/libva_buffer_sharing/va_display_x11.c b/examples/libva_buffer_sharing/va_display_x11.c
+new file mode 100755
+index 0000000..336bf86
+--- /dev/null
++++ b/examples/libva_buffer_sharing/va_display_x11.c
+@@ -0,0 +1,139 @@
++/*
++ * Copyright (c) 2012 Intel Corporation. All Rights Reserved.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sub license, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ * 
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial portions
++ * of the Software.
++ * 
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
++ * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-INFRINGEMENT.
++ * IN NO EVENT SHALL PRECISION INSIGHT AND/OR ITS SUPPLIERS BE LIABLE FOR
++ * ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
++ * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
++ * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++
++#include <stdio.h>
++#include <stdbool.h>
++#include <va/va_x11.h>
++#include "va_display.h"
++
++static Display *x11_display;
++static Window   x11_window;
++
++static VADisplay
++va_open_display_x11(void)
++{
++    x11_display = XOpenDisplay(NULL);
++    if (!x11_display) {
++        fprintf(stderr, "error: can't connect to X server!\n");
++        return NULL;
++    }
++    return vaGetDisplay(x11_display);
++}
++
++static void
++va_close_display_x11(VADisplay va_dpy)
++{
++    if (!x11_display)
++        return;
++
++    if (x11_window) {
++        XUnmapWindow(x11_display, x11_window);
++        XDestroyWindow(x11_display, x11_window);
++        x11_window = None;
++    }
++    XCloseDisplay(x11_display);
++    x11_display = NULL;
++}
++
++static int
++ensure_window(unsigned int width, unsigned int height)
++{
++    Window win, rootwin;
++    unsigned int black_pixel, white_pixel;
++    int screen;
++
++    if (!x11_display)
++        return 0;
++
++    if (x11_window) {
++        XResizeWindow(x11_display, x11_window, width, height);
++        return 1;
++    }
++
++    screen      = DefaultScreen(x11_display);
++    rootwin     = RootWindow(x11_display, screen);
++    black_pixel = BlackPixel(x11_display, screen);
++    white_pixel = WhitePixel(x11_display, screen);
++
++    win = XCreateSimpleWindow(
++        x11_display,
++        rootwin,
++        0, 0, width, height,
++        1, black_pixel, white_pixel
++    );
++    if (!win)
++        return 0;
++    x11_window = win;
++
++    XMapWindow(x11_display, x11_window);
++    XSync(x11_display, False);
++    return 1;
++}
++
++static inline bool
++validate_rect(const VARectangle *rect)
++{
++    return (rect            &&
++            rect->x >= 0    &&
++            rect->y >= 0    &&
++            rect->width > 0 &&
++            rect->height > 0);
++}
++
++static VAStatus
++va_put_surface_x11(
++    VADisplay          va_dpy,
++    VASurfaceID        surface,
++    const VARectangle *src_rect,
++    const VARectangle *dst_rect
++)
++{
++    unsigned int win_width, win_height;
++
++    if (!va_dpy)
++        return VA_STATUS_ERROR_INVALID_DISPLAY;
++    if (surface == VA_INVALID_SURFACE)
++        return VA_STATUS_ERROR_INVALID_SURFACE;
++    if (!validate_rect(src_rect) || !validate_rect(dst_rect))
++        return VA_STATUS_ERROR_INVALID_PARAMETER;
++
++    win_width  = dst_rect->x + dst_rect->width;
++    win_height = dst_rect->y + dst_rect->height;
++    if (!ensure_window(win_width, win_height))
++        return VA_STATUS_ERROR_ALLOCATION_FAILED;
++    return vaPutSurface(va_dpy, surface, x11_window,
++                        src_rect->x, src_rect->y,
++                        src_rect->width, src_rect->height,
++                        dst_rect->x, dst_rect->y,
++                        dst_rect->width, dst_rect->height,
++                        NULL, 0,
++                        VA_FRAME_PICTURE);
++}
++
++const VADisplayHooks va_display_hooks_x11 = {
++    "x11",
++    va_open_display_x11,
++    va_close_display_x11,
++    va_put_surface_x11,
++};
+diff --git a/kernels/runtime_gray_effect.cl b/kernels/runtime_gray_effect.cl
+new file mode 100644
+index 0000000..b89eeae
+--- /dev/null
++++ b/kernels/runtime_gray_effect.cl
+@@ -0,0 +1,28 @@
++__kernel void
++runtime_gray_effect(__read_only image2d_t src_y,
++                    __read_only image2d_t src_uv,
++                    __write_only image2d_t dst_y,
++                    __write_only image2d_t dst_uv)
++{
++  const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_FILTER_NEAREST;
++  int2 coord_r, coord_w;
++  uint4 color = (uint4)(0, 0, 0, 0);
++
++  coord_r.x = (int)get_global_id(0);
++  coord_r.y = (int)get_global_id(1);
++
++  coord_w = coord_r;
++
++  color = read_imageui(src_y, sampler, coord_r);
++
++  write_imageui(dst_y, coord_w, color);
++
++  coord_r /= 2;
++  coord_w /= 2;
++  color = read_imageui(src_uv, sampler, coord_r);
++
++  color.x = 0x8080;
++
++  write_imageui(dst_uv, coord_w, color);
++}
++
+-- 
+1.9.1
+
