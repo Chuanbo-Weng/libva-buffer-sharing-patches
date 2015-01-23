@@ -1,17 +1,19 @@
-From 38d0d1db2aec805a36057a5c7c7baff706c46ece Mon Sep 17 00:00:00 2001
+From 1f4bcaba3d7754e3abab2de7133af255b9c8cac4 Mon Sep 17 00:00:00 2001
 From: Chuanbo Weng <chuanbo.weng@intel.com>
-Date: Wed, 21 Jan 2015 10:27:41 +0800
-Subject: [PATCH v3 2/2] Add document to describe the detials of libva buffer
+Date: Fri, 23 Jan 2015 18:01:54 +0800
+Subject: [PATCH v4 2/2] Add document to describe the detials of libva buffer
  sharing.
 
 This document includes the steps of using libva buffer sharing and
 the way to build and run corresponding example.
 
+v4: Fix whitespace format warnings.
+
 Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
 ---
  docs/Beignet.mdwn                          |  1 +
- docs/howto/libva-buffer-sharing-howto.mdwn | 68 ++++++++++++++++++++++++++++++
- 2 files changed, 69 insertions(+)
+ docs/howto/libva-buffer-sharing-howto.mdwn | 67 ++++++++++++++++++++++++++++++
+ 2 files changed, 68 insertions(+)
  create mode 100644 docs/howto/libva-buffer-sharing-howto.mdwn
 
 diff --git a/docs/Beignet.mdwn b/docs/Beignet.mdwn
@@ -28,15 +30,15 @@ index 8132c36..fccbac0 100644
  [http://www.freedesktop.org/wiki/Software/Beignet/](http://www.freedesktop.org/wiki/Software/Beignet/)
 diff --git a/docs/howto/libva-buffer-sharing-howto.mdwn b/docs/howto/libva-buffer-sharing-howto.mdwn
 new file mode 100644
-index 0000000..53bd58f
+index 0000000..627346f
 --- /dev/null
 +++ b/docs/howto/libva-buffer-sharing-howto.mdwn
-@@ -0,0 +1,68 @@
+@@ -0,0 +1,67 @@
 +Libva Buffer Sharing HowTo
 +==========================
 +
-+Beignet has extensions (clCreateBufferFromLibvaIntel/clCreateImageFromLibvaIntel) 
-+to share gpu buffer object with libva. So users can utilize OpenCL to do processing 
++Beignet has extensions (clCreateBufferFromLibvaIntel/clCreateImageFromLibvaIntel)
++to share gpu buffer object with libva. So users can utilize OpenCL to do processing
 +on VASurface or VABuffer without buffer copy.
 +
 +Prerequisite
@@ -60,11 +62,11 @@ index 0000000..53bd58f
 +  to do processing by OpenCL.
 +
 +- Use clCreateBufferFromLibvaIntel/clCreateImageFromLibvaIntel to create corresponding
-+  cl memory object from VASurface/VABuffer's handle. If you create a normal VASurface, 
-+  you should use clCreateImageFromLibvaIntel to create a cl image object from VASurface, 
-+  because VASurface is a tiling gpu buffer object. The only case you should use 
-+  clCreateBufferFromLibvaIntel to create a cl buffer object from VASurface is that: The 
-+  VASurface is created from an external untiling gpu buffer object. And You should use 
++  cl memory object from VASurface/VABuffer's handle. If you create a normal VASurface,
++  you should use clCreateImageFromLibvaIntel to create a cl image object from VASurface,
++  because VASurface is a tiling gpu buffer object. The only case you should use
++  clCreateBufferFromLibvaIntel to create a cl buffer object from VASurface is that: The
++  VASurface is created from an external untiling gpu buffer object. And You should use
 +  clCreateBufferFromLibvaIntel to create a cl buffer object from VABuffer.
 +
 +- Use OpenCL to do post-processing.
@@ -94,12 +96,11 @@ index 0000000..53bd58f
 +  `> . ../utests/setenv.sh`
 +  `> ./example-libva_buffer_sharing`
 +
-+In addition, you can choose to save the result as a nv12 file. You can use gst-launch-1.0 to see 
-+the result. Just install gstreamer1.0-plugins-base, gstreamer1.0-plugins-bad and 
++In addition, you can choose to save the result as a nv12 file. You can use gst-launch-1.0 to see
++the result. Just install gstreamer1.0-plugins-base, gstreamer1.0-plugins-bad and
 +gstreamer1.0-x by apt on Ubuntu. Then running the following command:
 +  `> gst-launch-1.0 filesrc location=file_name ! videoparse format=nv12 width=xxx height=xxx \
 +   ! imagefreeze ! videoconvert ! video/x-raw, format=BGRx ! ximagesink`
-+  
 -- 
 1.9.1
 

@@ -1,7 +1,7 @@
-From 205667a295b8afbb344f1fdc339f4fab5027881e Mon Sep 17 00:00:00 2001
+From c31c9acb9560997ab5dc9d6c4c6ed541ea0e3682 Mon Sep 17 00:00:00 2001
 From: Chuanbo Weng <chuanbo.weng@intel.com>
-Date: Wed, 21 Jan 2015 10:23:28 +0800
-Subject: [PATCH v3 1/2] Add example to show libva buffer sharing with
+Date: Fri, 23 Jan 2015 17:59:06 +0800
+Subject: [PATCH v4 1/2] Add example to show libva buffer sharing with
  extension clCreateImageFromLibvaIntel.
 
 This example read a source nv12 file to a VASurface, and create a target
@@ -12,21 +12,26 @@ shown on screen by default.
 Code of loading nv12 file to VASurface are referenced from
 libva/test/encode/avcenc.c.
 
+v2:
+Delete 1920x1080.nv12 and 640x480.nv12 because of large size, add
+256_128.nv12 as default test image.
+
 v3:
 1. Re-org files: add libva as a submodule then use display related
    files.
 2. Show result on screen by default instead of saving as a file.
 3. Fix warnings.
 
+v4: Fix whitespace format warnings.
+
 Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
-Signed-off-by: Zhao Yakui <yakui.zhao@intel.com>
 ---
  CMakeLists.txt                                     |  28 ++
  examples/CMakeLists.txt                            |  35 ++
  examples/libva_buffer_sharing/256_128.nv12         |   1 +
  .../libva_buffer_sharing/libva_buffer_sharing.cpp  | 476 +++++++++++++++++++++
- kernels/runtime_gray_effect.cl                     |  28 ++
- 5 files changed, 568 insertions(+)
+ kernels/runtime_gray_effect.cl                     |  27 ++
+ 5 files changed, 567 insertions(+)
  create mode 100644 examples/CMakeLists.txt
  create mode 100644 examples/libva_buffer_sharing/256_128.nv12
  create mode 100644 examples/libva_buffer_sharing/libva_buffer_sharing.cpp
@@ -129,7 +134,7 @@ index 0000000..230f4cf
 \ No newline at end of file
 diff --git a/examples/libva_buffer_sharing/libva_buffer_sharing.cpp b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
 new file mode 100644
-index 0000000..9b0cf6f
+index 0000000..96019a9
 --- /dev/null
 +++ b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
 @@ -0,0 +1,476 @@
@@ -370,7 +375,7 @@ index 0000000..9b0cf6f
 +      u_src += (picture_width / 2);
 +      v_src += (picture_width / 2);
 +    }
-+  } 
++  }
 +
 +  vaUnmapBuffer(va_dpy, surface_image.buf);
 +  vaDestroyImage(va_dpy, surface_image.image_id);
@@ -450,7 +455,7 @@ index 0000000..9b0cf6f
 +      u_dst += (picture_width / 2);
 +      v_dst += (picture_width / 2);
 +    }
-+  } 
++  }
 +
 +  fwrite(newImageBuffer, frame_size, 1, nv12_fp);
 +
@@ -503,7 +508,7 @@ index 0000000..9b0cf6f
 +  buf_info.mem_type = VA_SURFACE_ATTRIB_MEM_TYPE_KERNEL_DRM;
 +  va_status = vaAcquireBufferHandle(va_dpy, src_surface_image.buf, &buf_info);
 +  CHECK_VASTATUS(va_status,"vaAcquireBufferHandle");
-+  cl_mem src_y, src_uv;	
++  cl_mem src_y, src_uv;
 +  create_y_image_object_from_libva(&src_surface_image, &buf_info, &src_y);
 +  OCL_CALL (clSetKernelArg, kernel, 0, sizeof(cl_mem), &src_y);
 +
@@ -523,7 +528,7 @@ index 0000000..9b0cf6f
 +  CHECK_VASTATUS(va_status,"vaDeriveImage");
 +  va_status = vaAcquireBufferHandle(va_dpy, dst_surface_image.buf, &buf_info);
 +  CHECK_VASTATUS(va_status,"vaAcquireBufferHandle");
-+  cl_mem dst_y, dst_uv;	
++  cl_mem dst_y, dst_uv;
 +  create_y_image_object_from_libva(&dst_surface_image, &buf_info, &dst_y);
 +  OCL_CALL (clSetKernelArg, kernel, 2, sizeof(cl_mem), &dst_y);
 +  create_uv_image_object_from_libva(&dst_surface_image, &buf_info, &dst_uv);
@@ -552,7 +557,7 @@ index 0000000..9b0cf6f
 +  cl_kernel_destroy();
 +  cl_ocl_destroy();
 +
-+  
++
 +  if (putsurface) {
 +    VARectangle src_rect, dst_rect;
 +
@@ -611,10 +616,10 @@ index 0000000..9b0cf6f
 +}
 diff --git a/kernels/runtime_gray_effect.cl b/kernels/runtime_gray_effect.cl
 new file mode 100644
-index 0000000..b89eeae
+index 0000000..9cc43e9
 --- /dev/null
 +++ b/kernels/runtime_gray_effect.cl
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,27 @@
 +__kernel void
 +runtime_gray_effect(__read_only image2d_t src_y,
 +                    __read_only image2d_t src_uv,
@@ -642,7 +647,6 @@ index 0000000..b89eeae
 +
 +  write_imageui(dst_uv, coord_w, color);
 +}
-+
 -- 
 1.9.1
 
