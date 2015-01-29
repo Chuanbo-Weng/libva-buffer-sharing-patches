@@ -1,13 +1,11 @@
-From 1f4bcaba3d7754e3abab2de7133af255b9c8cac4 Mon Sep 17 00:00:00 2001
+From 40f0dc3f2a585ad075bd424ddb0d8729372d4398 Mon Sep 17 00:00:00 2001
 From: Chuanbo Weng <chuanbo.weng@intel.com>
-Date: Fri, 23 Jan 2015 18:01:54 +0800
-Subject: [PATCH v4 2/2] Add document to describe the detials of libva buffer
+Date: Thu, 29 Jan 2015 11:10:43 +0800
+Subject: [PATCH v5 2/2] Add document to describe the detials of libva buffer
  sharing.
 
 This document includes the steps of using libva buffer sharing and
 the way to build and run corresponding example.
-
-v4: Fix whitespace format warnings.
 
 Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
 ---
@@ -30,7 +28,7 @@ index 8132c36..fccbac0 100644
  [http://www.freedesktop.org/wiki/Software/Beignet/](http://www.freedesktop.org/wiki/Software/Beignet/)
 diff --git a/docs/howto/libva-buffer-sharing-howto.mdwn b/docs/howto/libva-buffer-sharing-howto.mdwn
 new file mode 100644
-index 0000000..627346f
+index 0000000..fe64d73
 --- /dev/null
 +++ b/docs/howto/libva-buffer-sharing-howto.mdwn
 @@ -0,0 +1,67 @@
@@ -80,8 +78,8 @@ index 0000000..627346f
 +
 +We have developed an example of using clCreateImageFromLibvaIntel in examples/libva_buffer_sharing
 +directory. This example read a source nv12 file to a VASurface, and create a target VASurface.
-+Then create corresponding cl image objects from them. After using ocl to change this VASurface
-+to a gray image, target VASurface is shown on screen.
++Then create corresponding cl image objects from them. After using ocl to do a mirror effect
++post-processing on this source surface, target VASurface is shown on screen by default.
 +
 +- Add option -DBUILD_EXAMPLES=ON to enable building examples when running cmake, such as:
 +  `> mkdir build`

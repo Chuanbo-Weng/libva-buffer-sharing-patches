@@ -1,13 +1,13 @@
-From c31c9acb9560997ab5dc9d6c4c6ed541ea0e3682 Mon Sep 17 00:00:00 2001
+From d0e4df63fb71b57c1b523c63abd958861d6e720e Mon Sep 17 00:00:00 2001
 From: Chuanbo Weng <chuanbo.weng@intel.com>
-Date: Fri, 23 Jan 2015 17:59:06 +0800
-Subject: [PATCH v4 1/2] Add example to show libva buffer sharing with
+Date: Thu, 29 Jan 2015 10:56:59 +0800
+Subject: [PATCH v5 1/2] Add example to show libva buffer sharing with
  extension clCreateImageFromLibvaIntel.
 
-This example read a source nv12 file to a VASurface, and create a target
-VASurface. Then create corresponding cl image objects from them. After
-using ocl to change this VASurface to a gray image, target VASurface is
-shown on screen by default.
+This example reads a source nv12 file to a VASurface, and creates a target
+VASurface. Then creates corresponding cl image objects from them. After
+using ocl to do mirror effect post-processing on source VASurface, target
+VASurface is shown on screen by default.
 
 Code of loading nv12 file to VASurface are referenced from
 libva/test/encode/avcenc.c.
@@ -24,18 +24,25 @@ v3:
 
 v4: Fix whitespace format warnings.
 
+v5:
+1. Modify upload_nv12_to_surface to read a nv12 file and then upload
+   it to an NV12 VASurface. Also modify store_surface_to_nv12.
+2. Change the cl post-processing kernel from gray effect to mirror
+   effect, which make demo cooler.
+3. Minor fix of other problems.
+
 Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
 ---
  CMakeLists.txt                                     |  28 ++
  examples/CMakeLists.txt                            |  35 ++
  examples/libva_buffer_sharing/256_128.nv12         |   1 +
- .../libva_buffer_sharing/libva_buffer_sharing.cpp  | 476 +++++++++++++++++++++
- kernels/runtime_gray_effect.cl                     |  27 ++
- 5 files changed, 567 insertions(+)
+ .../libva_buffer_sharing/libva_buffer_sharing.cpp  | 469 +++++++++++++++++++++
+ kernels/runtime_mirror_effect.cl                   |  24 ++
+ 5 files changed, 557 insertions(+)
  create mode 100644 examples/CMakeLists.txt
  create mode 100644 examples/libva_buffer_sharing/256_128.nv12
  create mode 100644 examples/libva_buffer_sharing/libva_buffer_sharing.cpp
- create mode 100644 kernels/runtime_gray_effect.cl
+ create mode 100644 kernels/runtime_mirror_effect.cl
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index 38343c1..01ec1d8 100644
@@ -134,12 +141,12 @@ index 0000000..230f4cf
 \ No newline at end of file
 diff --git a/examples/libva_buffer_sharing/libva_buffer_sharing.cpp b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
 new file mode 100644
-index 0000000..96019a9
+index 0000000..fd02b18
 --- /dev/null
 +++ b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
-@@ -0,0 +1,476 @@
+@@ -0,0 +1,469 @@
 +/*
-+ * Copyright (c) 2012 Intel Corporation. All Rights Reserved.
++ * Copyright (c) 2012, 2015 Intel Corporation. All Rights Reserved.
 + *
 + * Permission is hereby granted, free of charge, to any person obtaining a
 + * copy of this software and associated documentation files (the
@@ -312,7 +319,7 @@ index 0000000..96019a9
 +
 +  //ocl initialization: basic & create kernel & get extension
 +  printf("\n***********************OpenCL info: ***********************\n");
-+  if ((cl_status = cl_test_init("runtime_gray_effect.cl", "runtime_gray_effect", SOURCE)) != 0){
++  if ((cl_status = cl_test_init("runtime_mirror_effect.cl", "runtime_mirror_effect", SOURCE)) != 0){
 +    fprintf(stderr, "cl_test_init error\n");
 +    exit(1);
 +  }
@@ -332,10 +339,9 @@ index 0000000..96019a9
 +{
 +  VAImage surface_image;
 +  void *surface_p = NULL;
-+  unsigned char *y_src, *u_src, *v_src;
++  unsigned char *y_src, *u_src;
 +  unsigned char *y_dst, *u_dst;
 +  int y_size = picture_width * picture_height;
-+  int u_size = (picture_width >> 1) * (picture_height >> 1);
 +  int row, col;
 +  size_t n_items;
 +
@@ -348,12 +354,11 @@ index 0000000..96019a9
 +  va_status = vaDeriveImage(va_dpy, surface_id, &surface_image);
 +  CHECK_VASTATUS(va_status,"vaDeriveImage");
 +
-+  vaMapBuffer(va_dpy, surface_image.buf, &surface_p);
-+  assert(VA_STATUS_SUCCESS == va_status);
++  va_status = vaMapBuffer(va_dpy, surface_image.buf, &surface_p);
++  CHECK_VASTATUS(va_status,"vaMapBuffer");
 +
 +  y_src = newImageBuffer;
-+  u_src = newImageBuffer + y_size; /* UV offset for NV12 */
-+  v_src = newImageBuffer + y_size + u_size;
++  u_src = newImageBuffer + y_size; /* U offset for NV12 */
 +
 +  y_dst = (unsigned char *)surface_p + surface_image.offsets[0];
 +  u_dst = (unsigned char *)surface_p + surface_image.offsets[1]; /* U offset for NV12 */
@@ -365,16 +370,14 @@ index 0000000..96019a9
 +    y_src += picture_width;
 +  }
 +
-+  if (surface_image.format.fourcc == VA_FOURCC_NV12) { /* UV plane */
-+    for (row = 0; row < surface_image.height / 2; row++) {
-+      for (col = 0; col < surface_image.width / 2; col++) {
-+        u_dst[col * 2] = u_src[col];
-+        u_dst[col * 2 + 1] = v_src[col];
-+      }
-+      u_dst += surface_image.pitches[1];
-+      u_src += (picture_width / 2);
-+      v_src += (picture_width / 2);
++  assert(surface_image.format.fourcc == VA_FOURCC_NV12); /* UV plane */
++  for (row = 0; row < surface_image.height / 2; row++) {
++    for (col = 0; col < surface_image.width / 2; col++) {
++      u_dst[col * 2] = u_src[col * 2];
++      u_dst[col * 2 + 1] = u_src[col * 2 + 1];
 +    }
++    u_dst += surface_image.pitches[1];
++    u_src += picture_width;
 +  }
 +
 +  vaUnmapBuffer(va_dpy, surface_image.buf);
@@ -420,9 +423,8 @@ index 0000000..96019a9
 +  VAImage surface_image;
 +  void *surface_p = NULL;
 +  unsigned char *y_src, *u_src;
-+  unsigned char *y_dst, *u_dst, *v_dst;
++  unsigned char *y_dst, *u_dst;
 +  int y_size = picture_width * picture_height;
-+  int u_size = (picture_width >> 1) * (picture_height >> 1);
 +  int row, col;
 +
 +  va_status = vaDeriveImage(va_dpy, surface_id, &surface_image);
@@ -435,8 +437,7 @@ index 0000000..96019a9
 +  u_src = (unsigned char *)surface_p + surface_image.offsets[1]; /* U offset for NV12 */
 +
 +  y_dst = newImageBuffer;
-+  u_dst = newImageBuffer + y_size; /* UV offset for NV12 */
-+  v_dst = newImageBuffer + y_size + u_size;
++  u_dst = newImageBuffer + y_size; /* U offset for NV12 */
 +
 +  /* Y plane */
 +  for (row = 0; row < surface_image.height; row++) {
@@ -445,16 +446,14 @@ index 0000000..96019a9
 +    y_dst += picture_width;
 +  }
 +
-+  if (surface_image.format.fourcc == VA_FOURCC_NV12) { /* UV plane */
-+    for (row = 0; row < surface_image.height / 2; row++) {
-+      for (col = 0; col < surface_image.width / 2; col++) {
-+        u_dst[col] = u_src[col * 2];
-+        v_dst[col] = u_src[col * 2 + 1];
-+      }
-+      u_src += surface_image.pitches[1];
-+      u_dst += (picture_width / 2);
-+      v_dst += (picture_width / 2);
++  assert(surface_image.format.fourcc == VA_FOURCC_NV12); /* UV plane */
++  for (row = 0; row < surface_image.height / 2; row++) {
++    for (col = 0; col < surface_image.width / 2; col++) {
++      u_dst[col * 2] = u_src[col * 2];
++      u_dst[col * 2 + 1] = u_src[col * 2 + 1];
 +    }
++    u_src += surface_image.pitches[1];
++    u_dst += picture_width;
 +  }
 +
 +  fwrite(newImageBuffer, frame_size, 1, nv12_fp);
@@ -533,6 +532,7 @@ index 0000000..96019a9
 +  OCL_CALL (clSetKernelArg, kernel, 2, sizeof(cl_mem), &dst_y);
 +  create_uv_image_object_from_libva(&dst_surface_image, &buf_info, &dst_uv);
 +  OCL_CALL (clSetKernelArg, kernel, 3, sizeof(cl_mem), &dst_uv);
++  OCL_CALL (clSetKernelArg, kernel, 4, sizeof(int), &picture_height);
 +
 +
 +  size_t global_size[2];
@@ -614,38 +614,35 @@ index 0000000..96019a9
 +
 +  return 0;
 +}
-diff --git a/kernels/runtime_gray_effect.cl b/kernels/runtime_gray_effect.cl
+diff --git a/kernels/runtime_mirror_effect.cl b/kernels/runtime_mirror_effect.cl
 new file mode 100644
-index 0000000..9cc43e9
+index 0000000..a978792
 --- /dev/null
-+++ b/kernels/runtime_gray_effect.cl
-@@ -0,0 +1,27 @@
++++ b/kernels/runtime_mirror_effect.cl
+@@ -0,0 +1,24 @@
 +__kernel void
-+runtime_gray_effect(__read_only image2d_t src_y,
-+                    __read_only image2d_t src_uv,
-+                    __write_only image2d_t dst_y,
-+                    __write_only image2d_t dst_uv)
++runtime_mirror_effect(__read_only image2d_t src_y,
++                      __read_only image2d_t src_uv,
++                      __write_only image2d_t dst_y,
++                      __write_only image2d_t dst_uv,
++                      int src_height)
 +{
 +  const sampler_t sampler = CLK_NORMALIZED_COORDS_FALSE | CLK_FILTER_NEAREST;
-+  int2 coord_r, coord_w;
-+  uint4 color = (uint4)(0, 0, 0, 0);
++  int2 loc = (int2)(get_global_id(0), get_global_id(1));
++  uint4 color_y, color_uv;
 +
-+  coord_r.x = (int)get_global_id(0);
-+  coord_r.y = (int)get_global_id(1);
++  if (loc.y < src_height/2) {
++    color_y = read_imageui(src_y, sampler, loc);
++    color_uv = read_imageui(src_uv, sampler, loc/2);
++  } else {
++    int2 newloc = (int2)(loc.x, src_height - loc.y);
++    color_y = read_imageui(src_y, sampler, newloc);
++    color_uv = read_imageui(src_uv, sampler, newloc/2);
++  }
 +
-+  coord_w = coord_r;
++  write_imageui(dst_y, loc, color_y);
++  write_imageui(dst_uv, loc/2, color_uv);
 +
-+  color = read_imageui(src_y, sampler, coord_r);
-+
-+  write_imageui(dst_y, coord_w, color);
-+
-+  coord_r /= 2;
-+  coord_w /= 2;
-+  color = read_imageui(src_uv, sampler, coord_r);
-+
-+  color.x = 0x8080;
-+
-+  write_imageui(dst_uv, coord_w, color);
 +}
 -- 
 1.9.1
