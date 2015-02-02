@@ -1,7 +1,7 @@
-From 40f0dc3f2a585ad075bd424ddb0d8729372d4398 Mon Sep 17 00:00:00 2001
+From e9748fb4710a354a5f5423e0e10de507641e951f Mon Sep 17 00:00:00 2001
 From: Chuanbo Weng <chuanbo.weng@intel.com>
-Date: Thu, 29 Jan 2015 11:10:43 +0800
-Subject: [PATCH v5 2/2] Add document to describe the detials of libva buffer
+Date: Mon, 2 Feb 2015 14:47:31 +0800
+Subject: [PATCH v6 2/2] Add document to describe the detials of libva buffer
  sharing.
 
 This document includes the steps of using libva buffer sharing and

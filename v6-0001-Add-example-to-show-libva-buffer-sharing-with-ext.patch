@@ -1,12 +1,14 @@
-From d0e4df63fb71b57c1b523c63abd958861d6e720e Mon Sep 17 00:00:00 2001
+From 639df22e4764e06bf4acf43083c0fc19e28a9ee4 Mon Sep 17 00:00:00 2001
 From: Chuanbo Weng <chuanbo.weng@intel.com>
-Date: Thu, 29 Jan 2015 10:56:59 +0800
-Subject: [PATCH v5 1/2] Add example to show libva buffer sharing with
+Date: Mon, 2 Feb 2015 14:42:30 +0800
+Subject: [PATCH v6 1/2] Add example to show libva buffer sharing with
  extension clCreateImageFromLibvaIntel.
 
-This example reads a source nv12 file to a VASurface, and creates a target
+This example reads a source nv12 file to a VASurface, and creates a
+target
 VASurface. Then creates corresponding cl image objects from them. After
-using ocl to do mirror effect post-processing on source VASurface, target
+using ocl to do mirror effect post-processing on source VASurface,
+target
 VASurface is shown on screen by default.
 
 Code of loading nv12 file to VASurface are referenced from
@@ -31,14 +33,16 @@ v5:
    effect, which make demo cooler.
 3. Minor fix of other problems.
 
+v6: Remove unnecessary OUTPUT_NV12_DEFAULT related code.
+
 Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
 ---
  CMakeLists.txt                                     |  28 ++
  examples/CMakeLists.txt                            |  35 ++
  examples/libva_buffer_sharing/256_128.nv12         |   1 +
- .../libva_buffer_sharing/libva_buffer_sharing.cpp  | 469 +++++++++++++++++++++
+ .../libva_buffer_sharing/libva_buffer_sharing.cpp  | 465 +++++++++++++++++++++
  kernels/runtime_mirror_effect.cl                   |  24 ++
- 5 files changed, 557 insertions(+)
+ 5 files changed, 553 insertions(+)
  create mode 100644 examples/CMakeLists.txt
  create mode 100644 examples/libva_buffer_sharing/256_128.nv12
  create mode 100644 examples/libva_buffer_sharing/libva_buffer_sharing.cpp
@@ -141,10 +145,10 @@ index 0000000..230f4cf
 \ No newline at end of file
 diff --git a/examples/libva_buffer_sharing/libva_buffer_sharing.cpp b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
 new file mode 100644
-index 0000000..fd02b18
+index 0000000..88084fb
 --- /dev/null
 +++ b/examples/libva_buffer_sharing/libva_buffer_sharing.cpp
-@@ -0,0 +1,469 @@
+@@ -0,0 +1,465 @@
 +/*
 + * Copyright (c) 2012, 2015 Intel Corporation. All Rights Reserved.
 + *
@@ -211,7 +215,6 @@ index 0000000..fd02b18
 +  { 0, 0, 0, 0 }
 +};
 +
-+#define OUTPUT_NV12_DEFAULT "./out.nv12"
 +#define WIDTH_DEFAULT 256
 +#define HEIGHT_DEFAULT 128
 +
@@ -296,9 +299,6 @@ index 0000000..fd02b18
 +
 +  if(!input_nv12){
 +    input_nv12 = INPUT_NV12_DEFAULT;
-+  }
-+  if(!output_nv12){
-+    output_nv12 = OUTPUT_NV12_DEFAULT;
 +  }
 +  if(picture_width == 0 && picture_height == 0){
 +    picture_width = WIDTH_DEFAULT;
