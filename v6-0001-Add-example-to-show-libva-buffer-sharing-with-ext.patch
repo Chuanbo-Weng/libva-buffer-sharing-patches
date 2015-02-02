@@ -36,6 +36,7 @@ v5:
 v6: Remove unnecessary OUTPUT_NV12_DEFAULT related code.
 
 Signed-off-by: Chuanbo Weng <chuanbo.weng@intel.com>
+Signed-off-by: Zhao Yakui <yakui.zhao@intel.com>
 ---
  CMakeLists.txt                                     |  28 ++
  examples/CMakeLists.txt                            |  35 ++
